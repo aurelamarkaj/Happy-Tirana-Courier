@@ -1,0 +1,112 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  BUSINESS
+  RIDER
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+
+  @@map("user_status")
+}
+
+enum OrderStatus {
+  CREATED
+  OFFERED
+  ACCEPTED
+  PICKED_UP
+  DELIVERED
+  CANCELLED
+
+  @@map("order_status")
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  EXPIRED
+
+  @@map("offer_status")
+}
+
+enum SettlementStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+
+  @@map("settlement_status")
+}
+
+model User {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  email        String?    @unique
+  phone        String?    @unique
+  passwordHash String     @map("password_hash")
+  role         UserRole
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("users")
+}
+
+model Zone {
+  id           String                               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  city         String                               @default("Tirana")
+  transportFee Decimal                              @map("transport_fee") @db.Decimal(10, 2)
+  polygon      Unsupported("geometry(Polygon,4326)")
+  active       Boolean                              @default(true)
+  createdAt    DateTime                             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime                             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("zones")
+}
+
+model Order {
+  id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code               String      @unique
+  businessId         String      @map("business_id") @db.Uuid
+  customerId         String?     @map("customer_id") @db.Uuid
+  deliveryAddressId  String      @map("delivery_address_id") @db.Uuid
+  zoneId             String      @map("zone_id") @db.Uuid
+  assignedRiderId    String?     @map("assigned_rider_id") @db.Uuid
+  productDescription String      @map("product_description")
+  productValue       Decimal     @map("product_value") @db.Decimal(10, 2)
+  transportFee       Decimal     @map("transport_fee") @db.Decimal(10, 2)
+  totalAmount        Decimal     @map("total_amount") @db.Decimal(10, 2)
+  platformCommission Decimal     @map("platform_commission") @db.Decimal(10, 2)
+  riderEarning       Decimal     @map("rider_earning") @db.Decimal(10, 2)
+  status             OrderStatus @default(CREATED)
+  version            Int         @default(1)
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  acceptedAt         DateTime?   @map("accepted_at") @db.Timestamptz
+  pickedUpAt         DateTime?   @map("picked_up_at") @db.Timestamptz
+  deliveredAt        DateTime?   @map("delivered_at") @db.Timestamptz
+  cancelledAt        DateTime?   @map("cancelled_at") @db.Timestamptz
+
+  @@index([status, createdAt])
+  @@index([businessId, createdAt])
+  @@index([assignedRiderId, createdAt])
+  @@map("orders")
+}

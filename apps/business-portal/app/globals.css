@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  background: #101010;
+  color: #ffffff;
+}
+
+body {
+  margin: 0;
+  background: #101010;
+  color: #ffffff;
+  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.font-sans {
+  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  font-style: normal;
+}
+
+i,
+em {
+  font-style: normal;
+}
+
+button {
+  cursor: pointer;
+}
+
+.type-brand {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 32px;
+}
+
+.type-header-brand {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 22px;
+}
+
+.type-screen-title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 32px;
+}
+
+.type-section-title {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 26px;
+}
+
+.type-restaurant {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.type-product {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.type-body,
+.type-input {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+.type-description,
+.type-secondary {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.type-price {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.type-large-price {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+.type-cta {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.type-bottom-nav {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.type-badge {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.type-warning,
+.type-rating {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.business-page {
+  background:
+    radial-gradient(circle at top right, rgba(255, 85, 0, 0.18), transparent 30%),
+    #101010;
+}
+
+.business-panel {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.business-soft {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.business-input {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.business-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.happy-pill-shadow {
+  box-shadow: 0 16px 38px rgba(255, 85, 0, 0.25);
+}

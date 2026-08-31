@@ -1,0 +1,2 @@
+-- Business credentials are intentionally not hardcoded in source control.
+-- Business accounts should be created locally from the superadmin portal/API.

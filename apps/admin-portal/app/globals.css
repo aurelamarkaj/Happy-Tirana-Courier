@@ -1,0 +1,207 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #ffffff;
+  background: #101010;
+}
+
+body {
+  margin: 0;
+  background: #101010;
+  color: #ffffff;
+  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.font-sans {
+  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  font-style: normal;
+}
+
+button {
+  cursor: pointer;
+}
+
+i,
+em {
+  font-style: normal;
+}
+
+.type-brand {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 32px;
+}
+
+.type-header-brand {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 22px;
+}
+
+.type-screen-title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 32px;
+}
+
+.type-section-title {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 26px;
+}
+
+.type-restaurant {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.type-product {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.type-body,
+.type-input {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+.type-description,
+.type-secondary {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.type-price {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.type-large-price {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+.type-cta {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.type-bottom-nav {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.type-badge {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.type-warning,
+.type-rating {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.admin-page {
+  background: #101010;
+}
+
+.admin-panel {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.admin-soft {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.admin-input {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.admin-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.happy-pill-shadow {
+  box-shadow: 0 16px 38px rgba(255, 85, 0, 0.25);
+}
+
+.leaflet-container {
+  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+}
+
+.admin-zone-point,
+.admin-map-pin,
+.admin-map-rider {
+  display: grid;
+  place-items: center;
+}
+
+.admin-zone-point span,
+.admin-map-pin span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 3px solid #ffffff;
+  border-radius: 999px;
+  background: #ff5500;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(16, 16, 16, 0.28);
+}
+
+.admin-map-business span {
+  background: #1a1a1a;
+}
+
+.admin-map-dropoff span {
+  background: #ff5500;
+}
+
+.admin-map-rider span {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  border: 4px solid #ffffff;
+  border-radius: 18px;
+  background: #1a1a1a;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 16px 32px rgba(16, 16, 16, 0.3);
+}
+
+.admin-map-rider-online span {
+  background: #ff5500;
+}
