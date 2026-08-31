@@ -1,0 +1,9 @@
+{
+  "name": "Happy Tirana Courier Rider",
+  "short_name": "Happy Rider",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8F9FA",
+  "theme_color": "#FF5500",
+  "icons": []
+}

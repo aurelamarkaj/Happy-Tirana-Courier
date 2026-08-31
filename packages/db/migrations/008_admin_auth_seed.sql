@@ -1,0 +1,3 @@
+-- Admin credentials are intentionally not hardcoded in source control.
+-- Create the first superadmin locally after migration, then create businesses
+-- and riders from the superadmin portal.

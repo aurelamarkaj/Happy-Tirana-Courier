@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Next.js / build output
+.next/
+.next.stale-*/
+dist/
+build/
+.turbo/
+out/
+coverage/
+*.tsbuildinfo
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Local runtime data
+postgres-data/
+.qa/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,171 @@
+"use client";
+
+import type { OrderStatus } from "@happy-tirana/shared-types";
+import { clearRiderSession, getRiderSession, saveRiderSession, type RiderSession } from "./rider-session";
+
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+
+export class RiderApiError extends Error {
+  code: string;
+  status: number;
+
+  constructor(status: number, code: string) {
+    super(code);
+    this.name = "RiderApiError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export interface RiderOrder {
+  id: string;
+  code: string;
+  status: OrderStatus;
+  businessName: string;
+  businessPhone: string | null;
+  pickupAddress: string;
+  pickupLat: number;
+  pickupLng: number;
+  customerName: string | null;
+  customerPhone: string | null;
+  dropoffAddress: string;
+  dropoffLat: number;
+  dropoffLng: number;
+  productDescription: string;
+  productValue: number;
+  transportFee: number;
+  platformCommission: number;
+  riderEarning: number;
+  totalAmount: number;
+  createdAt: string;
+  acceptedAt: string | null;
+  pickedUpAt: string | null;
+  deliveredAt: string | null;
+  offerExpiresAt?: string;
+}
+
+export interface RiderMetrics {
+  todayDeliveries: number;
+  weekDeliveries: number;
+  todayTransport: number;
+  todayEarnings: number;
+  weekEarnings: number;
+  platformDue: number;
+}
+
+export interface RiderDashboard {
+  rider: RiderSession & {
+    isOnline: boolean;
+    status: string;
+    lastSeenAt: string | null;
+  };
+  activeOrder: RiderOrder | null;
+  pendingOffers: RiderOrder[];
+  recentOrders: RiderOrder[];
+  metrics: RiderMetrics;
+}
+
+export interface RoutePoint {
+  lat: number;
+  lng: number;
+}
+
+async function riderFetch<T>(path: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Type", "application/json");
+
+  const session = getRiderSession();
+  if (session) headers.set("x-rider-id", session.id);
+
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
+  if (!response.ok) {
+    const body = await response.text();
+    let code = body;
+    try {
+      code = (JSON.parse(body) as { error?: string }).error ?? body;
+    } catch {
+      code = body;
+    }
+    throw new RiderApiError(response.status, code);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export async function loginRider(input: { email: string; password: string }) {
+  const data = await riderFetch<{ rider: RiderSession }>("/riders/auth/login", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  saveRiderSession(data.rider);
+  return data.rider;
+}
+
+export async function getRiderDashboard() {
+  const session = getRiderSession();
+  if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");
+  return riderFetch<RiderDashboard>(`/riders/${session.id}/dashboard`);
+}
+
+export async function setRiderAvailability(isOnline: boolean, location?: RoutePoint) {
+  const session = getRiderSession();
+  if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");
+  return riderFetch<RiderDashboard>(`/riders/${session.id}/availability`, {
+    method: "POST",
+    body: JSON.stringify({ isOnline, ...location })
+  });
+}
+
+export async function acceptOrder(orderId: string) {
+  const session = getRiderSession();
+  if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");
+  return riderFetch<RiderOrder>(`/orders/${orderId}/accept`, {
+    method: "POST",
+    body: JSON.stringify({ riderId: session.id })
+  });
+}
+
+export async function rejectOrder(orderId: string) {
+  const session = getRiderSession();
+  if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");
+  return riderFetch<{ ok: true }>(`/orders/${orderId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ riderId: session.id })
+  });
+}
+
+export async function updateOrderStatus(orderId: string, status: "PICKED_UP" | "DELIVERED" | "CANCELLED") {
+  const session = getRiderSession();
+  if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");
+  return riderFetch<RiderOrder>(`/riders/orders/${orderId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ riderId: session.id, status })
+  });
+}
+
+export async function sendRiderLocation(input: RoutePoint & { orderId?: string | null; speed?: number; heading?: number }) {
+  const session = getRiderSession();
+  if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");
+  return riderFetch<{ ok: true }>("/riders/me/location", {
+    method: "POST",
+    body: JSON.stringify({ riderId: session.id, orderId: input.orderId ?? null, lat: input.lat, lng: input.lng, speed: input.speed, heading: input.heading })
+  });
+}
+
+export async function getRoute(input: { fromLat: number; fromLng: number; toLat: number; toLng: number }) {
+  const params = new URLSearchParams({
+    fromLat: String(input.fromLat),
+    fromLng: String(input.fromLng),
+    toLat: String(input.toLat),
+    toLng: String(input.toLng)
+  });
+  return riderFetch<{ durationSeconds: number; distanceMeters: number; coordinates: RoutePoint[] }>(`/public/routes?${params}`);
+}
+
+export function logoutRider() {
+  clearRiderSession();
+}
+
+export function formatLek(value: number) {
+  return new Intl.NumberFormat("sq-AL", { maximumFractionDigits: 0 }).format(value) + " ALL";
+}

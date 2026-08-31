@@ -1,0 +1,2 @@
+-- Demo rider/order seed is intentionally omitted from source control.
+-- Create riders and live test orders locally through the superadmin portal/API.

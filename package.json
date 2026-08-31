@@ -1,0 +1,34 @@
+{
+  "name": "happy-tirana-courier",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local monorepo for Happy Tirana Courier: admin, business, rider, API, and PostGIS database schema.",
+  "packageManager": "npm@11.6.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev:api & npm run dev:admin & npm run dev:business & npm run dev:customer & npm run dev:rider & wait",
+    "dev:api": "npm run dev -w @happy-tirana/api",
+    "dev:admin": "npm run dev -w @happy-tirana/admin-portal",
+    "dev:business": "npm run dev -w @happy-tirana/business-portal",
+    "dev:customer": "npm run dev -w @happy-tirana/customer-portal",
+    "dev:rider": "npm run dev -w @happy-tirana/rider-app",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "docker compose exec -T postgres psql -U happy -d happy_tirana -f /docker-entrypoint-initdb.d/001_initial_postgis.sql -f /docker-entrypoint-initdb.d/002_customer_ordering.sql -f /docker-entrypoint-initdb.d/003_customer_accounts_cart_seed.sql -f /docker-entrypoint-initdb.d/004_customer_catalog_addresses_routes.sql -f /docker-entrypoint-initdb.d/005_guest_carts.sql -f /docker-entrypoint-initdb.d/006_rider_dashboard_seed.sql -f /docker-entrypoint-initdb.d/007_admin_business_categories.sql -f /docker-entrypoint-initdb.d/008_admin_auth_seed.sql -f /docker-entrypoint-initdb.d/009_business_auth_seed.sql -f /docker-entrypoint-initdb.d/010_hide_sample_catalog.sql",
+    "db:create-admin": "npm run create-admin -w @happy-tirana/api",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "prettier": "^3.6.0",
+    "typescript": "^5.9.0"
+  }
+}
