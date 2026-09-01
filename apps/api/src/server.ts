@@ -33,6 +33,8 @@ const io = new Server(server, {
     credentials: true,
   },
 });
+const nearbyRiderOfferLimit = 5;
+const orderOfferTtlMinutes = 3;
 
 app.use(helmet());
 app.use(
@@ -280,8 +282,45 @@ function mapBusinessDashboardOrder(row: Record<string, unknown>) {
     riderEarning: Number(row.rider_earning),
     platformCommission: Number(row.platform_commission),
     riderName: row.rider_name,
+    offeredRiderCount: Number(row.offered_rider_count ?? 0),
     createdAt: row.created_at,
   };
+}
+
+async function getBusinessDashboardOrderById(
+  orderId: string,
+  businessId?: string,
+) {
+  const { rows } = await pool.query(
+    `SELECT o.id,
+            o.code,
+            o.status,
+            o.product_description,
+            o.product_value,
+            o.transport_fee,
+            o.total_amount,
+            o.rider_earning,
+            o.platform_commission,
+            o.created_at,
+            c.name AS customer_name,
+            c.phone AS customer_phone,
+            a.address_text AS delivery_address,
+            u.name AS rider_name,
+            COUNT(oo.id) FILTER (WHERE oo.status = 'PENDING')::int AS offered_rider_count
+     FROM orders o
+     LEFT JOIN customers c ON c.id = o.customer_id
+     JOIN addresses a ON a.id = o.delivery_address_id
+     LEFT JOIN rider_profiles rp ON rp.id = o.assigned_rider_id
+     LEFT JOIN users u ON u.id = rp.user_id
+     LEFT JOIN order_offers oo ON oo.order_id = o.id
+     WHERE o.id = $1
+       AND ($2::uuid IS NULL OR o.business_id = $2)
+     GROUP BY o.id, c.id, a.id, u.name
+     LIMIT 1`,
+    [orderId, businessId ?? null],
+  );
+
+  return rows[0] ? mapBusinessDashboardOrder(rows[0]) : null;
 }
 
 function mapAdminBusiness(row: Record<string, unknown>) {
@@ -371,15 +410,48 @@ function mapAdminZone(row: Record<string, unknown>) {
   };
 }
 
-async function offerBusinessOrderToOnlineRiders(
+async function offerBusinessOrderToNearestRiders(
   client: PoolClient,
   orderId: string,
 ) {
-  const onlineRiders = await client.query(
-    "SELECT id FROM rider_profiles WHERE is_online = true AND status = 'ACTIVE'",
+  const nearestRiders = await client.query(
+    `WITH pickup AS (
+       SELECT COALESCE(b.lat, 41.3275)::numeric AS lat,
+              COALESCE(b.lng, 19.8187)::numeric AS lng
+       FROM orders o
+       JOIN businesses b ON b.id = o.business_id
+       WHERE o.id = $1
+     )
+     SELECT rp.id,
+            rp.user_id,
+            u.name,
+            latest.lat,
+            latest.lng,
+            CASE
+              WHEN latest.point IS NULL THEN NULL
+              ELSE ST_Distance(
+                latest.point,
+                ST_SetSRID(ST_MakePoint((SELECT lng FROM pickup), (SELECT lat FROM pickup)), 4326)::geography
+              )
+            END AS distance_meters
+     FROM rider_profiles rp
+     JOIN users u ON u.id = rp.user_id
+     LEFT JOIN LATERAL (
+       SELECT rl.point, rl.lat, rl.lng, rl.recorded_at
+       FROM rider_locations rl
+       WHERE rl.rider_id = rp.id
+       ORDER BY rl.recorded_at DESC
+       LIMIT 1
+     ) latest ON true
+     WHERE rp.is_online = true
+       AND rp.status = 'ACTIVE'
+       AND u.status = 'ACTIVE'
+     ORDER BY distance_meters ASC NULLS LAST, rp.last_seen_at DESC NULLS LAST
+     LIMIT $2`,
+    [orderId, nearbyRiderOfferLimit],
   );
 
-  if (onlineRiders.rows.length === 0) return [];
+  if (nearestRiders.rows.length === 0) return [];
 
   await client.query(
     `UPDATE orders
@@ -391,21 +463,45 @@ async function offerBusinessOrderToOnlineRiders(
     [orderId],
   );
 
-  for (const rider of onlineRiders.rows) {
+  for (const rider of nearestRiders.rows) {
     await client.query(
       `INSERT INTO order_offers (order_id, rider_id, status, expires_at)
-       VALUES ($1, $2, 'PENDING', now() + interval '3 minutes')
+       VALUES ($1, $2, 'PENDING', now() + ($3::int * interval '1 minute'))
        ON CONFLICT (order_id, rider_id) DO UPDATE
        SET status = 'PENDING',
            sent_at = now(),
            responded_at = NULL,
            expires_at = EXCLUDED.expires_at
        WHERE order_offers.status IN ('PENDING', 'EXPIRED', 'CANCELLED')`,
-      [orderId, rider.id],
+      [orderId, rider.id, orderOfferTtlMinutes],
+    );
+    await client.query(
+      `INSERT INTO notifications (user_id, order_id, type, channel, status, payload, sent_at)
+       VALUES (
+         $1,
+         $2,
+         'ORDER_OFFERED_NEARBY',
+         'SOCKET',
+         'SENT',
+         jsonb_build_object(
+           'riderId', $3::uuid,
+           'distanceMeters', $4::numeric,
+           'message', 'Ke nje porosi te re afer teje.'
+         ),
+         now()
+       )`,
+      [rider.user_id, orderId, rider.id, rider.distance_meters ?? null],
     );
   }
 
-  return onlineRiders.rows.map((rider) => String(rider.id));
+  return nearestRiders.rows.map((rider) => ({
+    id: String(rider.id),
+    name: String(rider.name),
+    distanceMeters:
+      rider.distance_meters === null || rider.distance_meters === undefined
+        ? null
+        : Number(rider.distance_meters),
+  }));
 }
 
 async function refreshOffersForRider(client: PoolClient, riderId: string) {
@@ -433,28 +529,11 @@ async function refreshOffersForRider(client: PoolClient, riderId: string) {
       "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', 'Offered automatically to online riders')",
       [order.id],
     );
-    await offerBusinessOrderToOnlineRiders(client, order.id);
+    await offerBusinessOrderToNearestRiders(client, order.id);
   }
 
   await client.query(
-    `INSERT INTO order_offers (order_id, rider_id, status, expires_at)
-     SELECT o.id, $1, 'PENDING', now() + interval '3 minutes'
-     FROM orders o
-     WHERE o.status = 'OFFERED'
-       AND o.assigned_rider_id IS NULL
-       AND NOT EXISTS (
-         SELECT 1
-         FROM order_offers oo
-         WHERE oo.order_id = o.id
-           AND oo.rider_id = $1
-           AND oo.status = 'REJECTED'
-       )
-     ON CONFLICT (order_id, rider_id) DO UPDATE
-     SET status = 'PENDING',
-         sent_at = now(),
-         responded_at = NULL,
-         expires_at = EXCLUDED.expires_at
-     WHERE order_offers.status IN ('PENDING', 'EXPIRED')`,
+    "UPDATE notifications SET status = 'SENT', sent_at = COALESCE(sent_at, now()) WHERE user_id = (SELECT user_id FROM rider_profiles WHERE id = $1) AND status = 'PENDING'",
     [riderId],
   );
 }
@@ -1914,13 +1993,16 @@ app.get("/businesses/:id/dashboard", async (req, res, next) => {
               c.name AS customer_name,
               c.phone AS customer_phone,
               a.address_text AS delivery_address,
-              u.name AS rider_name
+              u.name AS rider_name,
+              COUNT(oo.id) FILTER (WHERE oo.status = 'PENDING')::int AS offered_rider_count
        FROM orders o
        LEFT JOIN customers c ON c.id = o.customer_id
        JOIN addresses a ON a.id = o.delivery_address_id
        LEFT JOIN rider_profiles rp ON rp.id = o.assigned_rider_id
        LEFT JOIN users u ON u.id = rp.user_id
+       LEFT JOIN order_offers oo ON oo.order_id = o.id
        WHERE o.business_id = $1
+       GROUP BY o.id, c.id, a.id, u.name
        ORDER BY o.created_at DESC
        LIMIT 24`,
       [params.id],
@@ -1970,6 +2052,224 @@ app.get("/businesses/:id/dashboard", async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
+app.post("/businesses/:id/orders", async (req, res, next) => {
+  const client = await pool.connect();
+
+  try {
+    const params = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        customerName: z.string().min(2),
+        customerPhone: z.string().min(6),
+        addressText: z.string().min(5),
+        lat: z.coerce.number(),
+        lng: z.coerce.number(),
+        productDescription: z.string().min(2).optional(),
+        productValue: z.coerce.number().min(0).optional(),
+        items: z
+          .array(
+            z.object({
+              productId: z.string().uuid(),
+              quantity: z.number().int().positive(),
+            }),
+          )
+          .optional(),
+      })
+      .refine(
+        (value) =>
+          Boolean(value.items?.length) ||
+          (Boolean(value.productDescription) && value.productValue !== undefined),
+        {
+          message: "ORDER_PRODUCTS_REQUIRED",
+        },
+      )
+      .parse(req.body);
+
+    await client.query("BEGIN");
+
+    const business = await client.query(
+      "SELECT id FROM businesses WHERE id = $1 AND status = 'ACTIVE'",
+      [params.id],
+    );
+    if (!business.rows[0]) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "BUSINESS_NOT_FOUND" });
+      return;
+    }
+
+    const zoneResult = await client.query(
+      "SELECT * FROM resolve_zone_for_point($1, $2)",
+      [body.lat, body.lng],
+    );
+    const zone = zoneResult.rows[0];
+    if (!zone) {
+      await client.query("ROLLBACK");
+      res.status(422).json({ error: "DELIVERY_ZONE_NOT_FOUND" });
+      return;
+    }
+
+    const productIds = body.items?.map((item) => item.productId) ?? [];
+    const productResult = productIds.length
+      ? await client.query(
+          `SELECT id, name, price
+           FROM products
+           WHERE business_id = $1
+             AND is_available = true
+             AND id = ANY($2::uuid[])`,
+          [params.id, productIds],
+        )
+      : { rows: [] };
+
+    if (productIds.length && productResult.rows.length !== productIds.length) {
+      await client.query("ROLLBACK");
+      res.status(422).json({ error: "PRODUCT_NOT_AVAILABLE" });
+      return;
+    }
+
+    const productsById = new Map(
+      productResult.rows.map((product) => [product.id, product]),
+    );
+    const productValue = body.items?.length
+      ? body.items.reduce((sum, item) => {
+          const product = productsById.get(item.productId);
+          return sum + Number(product.price) * item.quantity;
+        }, 0)
+      : Number(body.productValue ?? 0);
+    const productDescription = body.items?.length
+      ? body.items
+          .map((item) => {
+            const product = productsById.get(item.productId);
+            return `${item.quantity}x ${product.name}`;
+          })
+          .join(", ")
+      : body.productDescription?.trim() ?? "Porosi biznesi";
+    const transportFee = Number(zone.transport_fee);
+    const platformCommission = Number((transportFee * 0.2).toFixed(2));
+    const riderEarning = Number((transportFee - platformCommission).toFixed(2));
+    const totalAmount = productValue + transportFee;
+
+    const customerResult = await client.query(
+      `INSERT INTO customers (name, phone)
+       VALUES ($1, $2)
+       RETURNING id`,
+      [body.customerName.trim(), body.customerPhone.trim()],
+    );
+
+    const addressResult = await client.query(
+      `INSERT INTO addresses (customer_id, zone_id, label, address_text, lat, lng)
+       VALUES ($1, $2, 'Dorezim', $3, $4, $5)
+       RETURNING id`,
+      [
+        customerResult.rows[0].id,
+        zone.zone_id,
+        body.addressText.trim(),
+        body.lat,
+        body.lng,
+      ],
+    );
+
+    const orderResult = await client.query(
+      `INSERT INTO orders (
+        code,
+        business_id,
+        customer_id,
+        delivery_address_id,
+        zone_id,
+        product_description,
+        product_value,
+        transport_fee,
+        total_amount,
+        platform_commission,
+        rider_earning,
+        status
+      )
+      VALUES (
+        'HTC-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)),
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'CREATED'
+      )
+      RETURNING *`,
+      [
+        params.id,
+        customerResult.rows[0].id,
+        addressResult.rows[0].id,
+        zone.zone_id,
+        productDescription,
+        productValue,
+        transportFee,
+        totalAmount,
+        platformCommission,
+        riderEarning,
+      ],
+    );
+
+    for (const item of body.items ?? []) {
+      const product = productsById.get(item.productId);
+      const unitPrice = Number(product.price);
+      await client.query(
+        `INSERT INTO order_items (order_id, product_id, name_snapshot, unit_price, quantity, line_total)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          orderResult.rows[0].id,
+          item.productId,
+          product.name,
+          unitPrice,
+          item.quantity,
+          unitPrice * item.quantity,
+        ],
+      );
+    }
+
+    await client.query(
+      "INSERT INTO order_status_history (order_id, to_status, note) VALUES ($1, 'CREATED', 'Created by business dashboard')",
+      [orderResult.rows[0].id],
+    );
+
+    const offeredRiders = await offerBusinessOrderToNearestRiders(
+      client,
+      orderResult.rows[0].id,
+    );
+    if (offeredRiders.length > 0) {
+      await client.query(
+        "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', 'Offered to nearest online riders')",
+        [orderResult.rows[0].id],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    const order = await getBusinessDashboardOrderById(
+      orderResult.rows[0].id,
+      params.id,
+    );
+    io.to("admin").emit("order.created", order);
+    io.to(`business:${params.id}`).emit("order.created", order);
+
+    if (offeredRiders.length > 0) {
+      io.to("admin").emit("order.offered", {
+        orderId: orderResult.rows[0].id,
+        riderIds: offeredRiders.map((rider) => rider.id),
+        expiresAt: new Date(
+          Date.now() + orderOfferTtlMinutes * 60 * 1000,
+        ).toISOString(),
+      });
+      for (const rider of offeredRiders) {
+        io.to(`rider:${rider.id}`).emit("order.offered", {
+          orderId: orderResult.rows[0].id,
+          message: "Ke nje porosi te re afer teje.",
+          distanceMeters: rider.distanceMeters,
+        });
+      }
+    }
+
+    res.status(201).json({ order, offeredRiders });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
   }
 });
 
@@ -2295,7 +2595,7 @@ app.patch(
           [params.orderId, order.status],
         );
       } else if (order.status === "CREATED") {
-        const riderIds = await offerBusinessOrderToOnlineRiders(
+        const offeredRiders = await offerBusinessOrderToNearestRiders(
           client,
           params.orderId,
         );
@@ -2305,12 +2605,16 @@ app.patch(
         );
         io.to("admin").emit("order.offered", {
           orderId: params.orderId,
-          riderIds,
-          expiresAt: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+          riderIds: offeredRiders.map((rider) => rider.id),
+          expiresAt: new Date(
+            Date.now() + orderOfferTtlMinutes * 60 * 1000,
+          ).toISOString(),
         });
-        for (const riderId of riderIds)
-          io.to(`rider:${riderId}`).emit("order.offered", {
+        for (const rider of offeredRiders)
+          io.to(`rider:${rider.id}`).emit("order.offered", {
             orderId: params.orderId,
+            message: "Ke nje porosi te re afer teje.",
+            distanceMeters: rider.distanceMeters,
           });
       }
 
@@ -2623,37 +2927,16 @@ app.post("/public/orders", async (req, res, next) => {
       );
     }
 
-    const onlineRiders = await client.query(
-      "SELECT id FROM rider_profiles WHERE is_online = true AND status = 'ACTIVE'",
+    const offeredRiders = await offerBusinessOrderToNearestRiders(
+      client,
+      orderResult.rows[0].id,
     );
-    if (onlineRiders.rows.length > 0) {
-      const offeredOrder = await client.query(
-        `UPDATE orders
-         SET status = 'OFFERED',
-             version = version + 1
-         WHERE id = $1
-         RETURNING *`,
-        [orderResult.rows[0].id],
-      );
-      orderResult.rows[0] = offeredOrder.rows[0];
-
+    if (offeredRiders.length > 0) {
       await client.query(
-        "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', 'Offered to online riders')",
+        "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', 'Offered to nearest online riders')",
         [orderResult.rows[0].id],
       );
-
-      for (const rider of onlineRiders.rows) {
-        await client.query(
-          `INSERT INTO order_offers (order_id, rider_id, status, expires_at)
-           VALUES ($1, $2, 'PENDING', now() + interval '3 minutes')
-           ON CONFLICT (order_id, rider_id) DO UPDATE
-           SET status = 'PENDING',
-               sent_at = now(),
-               responded_at = NULL,
-               expires_at = EXCLUDED.expires_at`,
-          [orderResult.rows[0].id, rider.id],
-        );
-      }
+      orderResult.rows[0].status = "OFFERED";
     }
 
     if (customerAccountId) {
@@ -2671,15 +2954,19 @@ app.post("/public/orders", async (req, res, next) => {
     await client.query("COMMIT");
 
     io.to("admin").emit("order.created", orderResult.rows[0]);
-    if (onlineRiders.rows.length > 0) {
+    if (offeredRiders.length > 0) {
       io.to("admin").emit("order.offered", {
         orderId: orderResult.rows[0].id,
-        riderIds: onlineRiders.rows.map((rider) => rider.id),
-        expiresAt: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+        riderIds: offeredRiders.map((rider) => rider.id),
+        expiresAt: new Date(
+          Date.now() + orderOfferTtlMinutes * 60 * 1000,
+        ).toISOString(),
       });
-      for (const rider of onlineRiders.rows) {
+      for (const rider of offeredRiders) {
         io.to(`rider:${rider.id}`).emit("order.offered", {
           orderId: orderResult.rows[0].id,
+          message: "Ke nje porosi te re afer teje.",
+          distanceMeters: rider.distanceMeters,
         });
       }
     }

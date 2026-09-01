@@ -42,7 +42,18 @@ export interface BusinessOrder {
   riderEarning: number;
   platformCommission: number;
   riderName: string | null;
+  offeredRiderCount: number;
   createdAt: string;
+}
+
+export interface AddressSuggestion {
+  id: string;
+  label: string;
+  area: string;
+  city: string;
+  details: string;
+  lat: number;
+  lng: number;
 }
 
 export interface BusinessDashboard {
@@ -130,6 +141,39 @@ export function logoutBusiness() {
 export async function getBusinessDashboard(businessId = activeBusinessId()) {
   return businessFetch<BusinessDashboard>(
     `/businesses/${businessId}/dashboard`,
+  );
+}
+
+export async function createBusinessOrder(
+  input: {
+    customerName: string;
+    customerPhone: string;
+    addressText: string;
+    lat: number;
+    lng: number;
+    productDescription?: string;
+    productValue?: number;
+    items?: Array<{ productId: string; quantity: number }>;
+  },
+  businessId = activeBusinessId(),
+) {
+  return businessFetch<{
+    order: BusinessOrder;
+    offeredRiders: Array<{
+      id: string;
+      name: string;
+      distanceMeters: number | null;
+    }>;
+  }>(`/businesses/${businessId}/orders`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function searchAddresses(query: string) {
+  const params = new URLSearchParams({ q: query });
+  return businessFetch<{ suggestions: AddressSuggestion[] }>(
+    `/public/addresses/search?${params}`,
   );
 }
 

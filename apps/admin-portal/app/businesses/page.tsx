@@ -57,7 +57,6 @@ export default function BusinessesPage() {
   const [form, setForm] = useState(emptyForm);
   const [categoryForm, setCategoryForm] = useState({
     name: "",
-    sortOrder: "50",
   });
   const [showForm, setShowForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -151,9 +150,9 @@ export default function BusinessesPage() {
     try {
       const data = await createAdminBusinessCategory({
         name: categoryForm.name.trim(),
-        sortOrder: Number(categoryForm.sortOrder) || 50,
+        sortOrder: 50,
       });
-      setCategoryForm({ name: "", sortOrder: "50" });
+      setCategoryForm({ name: "" });
       setForm((current) => ({ ...current, category: data.category.name }));
       await loadBusinesses();
       setMessage("Kategoria u krijua dhe u shtua ne dropdown.");
@@ -192,9 +191,9 @@ export default function BusinessesPage() {
   return (
     <AdminShell
       action={
-        <div className="flex flex-wrap gap-2">
+        <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
           <button
-            className="type-cta flex h-11 items-center justify-center rounded-xl bg-happy-orange px-4 text-white happy-pill-shadow"
+            className="type-cta flex h-11 w-full items-center justify-center rounded-xl bg-happy-orange px-4 text-white happy-pill-shadow sm:w-auto"
             onClick={() => setShowForm((current) => !current)}
             type="button"
           >
@@ -206,7 +205,7 @@ export default function BusinessesPage() {
             {showForm ? "Mbyll biznesin" : "Krijo biznes"}
           </button>
           <button
-            className="type-cta flex h-11 items-center justify-center rounded-xl bg-white/10 px-4 text-white hover:bg-white/15"
+            className="type-cta flex h-11 w-full items-center justify-center rounded-xl bg-white/10 px-4 text-white hover:bg-white/15 sm:w-auto"
             onClick={() => setShowCategoryForm((current) => !current)}
             type="button"
           >
@@ -247,14 +246,14 @@ export default function BusinessesPage() {
             className="admin-panel rounded-3xl border p-4 shadow-happy md:p-5"
             onSubmit={submitBusiness}
           >
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="type-badge uppercase tracking-wide text-happy-orange">
                   Kredenciale
                 </p>
                 <h2 className="type-section-title mt-1">Krijo biznes te ri</h2>
               </div>
-              <span className="type-secondary rounded-full bg-white/8 px-3 py-2 text-white/55">
+              <span className="type-secondary w-fit rounded-full bg-white/8 px-3 py-2 text-white/55">
                 Vendos kredencialet e biznesit
               </span>
             </div>
@@ -463,20 +462,6 @@ export default function BusinessesPage() {
                 value={categoryForm.name}
               />
             </Field>
-            <Field label="Renditja">
-              <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
-                onChange={(event) =>
-                  setCategoryForm({
-                    ...categoryForm,
-                    sortOrder: event.target.value,
-                  })
-                }
-                placeholder="50"
-                type="number"
-                value={categoryForm.sortOrder}
-              />
-            </Field>
             <button
               className="type-cta h-11 rounded-xl bg-happy-orange text-white happy-pill-shadow"
               disabled={savingCategory}
@@ -508,7 +493,7 @@ export default function BusinessesPage() {
       ) : null}
 
       <section className="admin-panel rounded-3xl border p-5 shadow-happy">
-        <div className="flex items-end justify-between gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="type-badge uppercase tracking-wide text-happy-orange">
               Lista
@@ -542,7 +527,7 @@ export default function BusinessesPage() {
                   {business.email ?? "pa email"}
                 </p>
               </div>
-              <div className="flex flex-wrap items-start justify-end gap-2">
+              <div className="flex flex-wrap items-start justify-start gap-2 md:justify-end">
                 <span className="type-badge h-fit rounded-full bg-white/10 px-3 py-2 text-white/62">
                   {business.category ?? "Te tjera"}
                 </span>

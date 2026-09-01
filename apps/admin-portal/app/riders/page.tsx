@@ -107,7 +107,7 @@ export default function RidersPage() {
     <AdminShell
       action={
         <button
-          className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange px-5 text-white happy-pill-shadow"
+          className="type-cta flex h-12 w-full items-center justify-center rounded-xl bg-happy-orange px-5 text-white happy-pill-shadow sm:w-auto"
           onClick={() => setShowForm((current) => !current)}
           type="button"
         >
@@ -143,14 +143,14 @@ export default function RidersPage() {
 
       {showForm ? (
         <section className="admin-panel rounded-3xl border p-5 shadow-happy">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="type-badge uppercase tracking-wide text-happy-orange">
                 Kredenciale
               </p>
               <h2 className="type-section-title mt-1">Krijo motorist te ri</h2>
             </div>
-            <span className="type-secondary rounded-full bg-white/8 px-3 py-2 text-white/55">
+            <span className="type-secondary w-fit rounded-full bg-white/8 px-3 py-2 text-white/55">
               Vendos kredencialet e motoristit
             </span>
           </div>
@@ -167,7 +167,7 @@ export default function RidersPage() {
                 value={form.name}
               />
             </Field>
-            <Field label="Telefoni per login">
+            <Field label="Telefoni i motoristit">
               <input
                 className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
                 onChange={(event) =>
@@ -268,7 +268,7 @@ export default function RidersPage() {
       ) : null}
 
       <section className="admin-panel rounded-3xl border p-5 shadow-happy">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="type-section-title">Flota</h2>
           <div className="flex items-center gap-2 text-white/45">
             <span className="type-secondary">

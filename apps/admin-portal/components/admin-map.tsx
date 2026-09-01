@@ -163,7 +163,7 @@ export function ZoneBuilderMap({
   }, [zones]);
 
   return (
-    <div className="relative min-h-[528px] overflow-hidden rounded-2xl bg-[#f8f9fa]">
+    <div className="relative min-h-[360px] overflow-hidden rounded-2xl bg-[#f8f9fa] sm:min-h-[528px]">
       <div className="absolute inset-0" ref={mapElementRef} />
       <div className="absolute left-4 top-4 rounded-2xl bg-[#101010]/90 px-4 py-3 text-white shadow-happy backdrop-blur">
         <p className="type-badge flex items-center uppercase tracking-wide text-white/55">
@@ -284,7 +284,7 @@ export function AdminLiveMap({
   }, [orders, riders]);
 
   return (
-    <div className="relative min-h-[528px] overflow-hidden rounded-2xl bg-[#f8f9fa]">
+    <div className="relative min-h-[360px] overflow-hidden rounded-2xl bg-[#f8f9fa] sm:min-h-[528px]">
       <div className="absolute inset-0" ref={mapElementRef} />
       <div className="absolute left-4 top-4 rounded-2xl bg-[#101010]/90 px-4 py-3 text-white shadow-happy backdrop-blur">
         <p className="type-badge uppercase tracking-wide text-white/55">

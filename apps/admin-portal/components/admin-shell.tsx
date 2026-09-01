@@ -79,14 +79,14 @@ export function AdminShell({
   return (
     <main className="admin-page min-h-screen pb-10 text-white">
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#101010]/92 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 md:px-6">
-          <Link className="flex items-center gap-3" href="/">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 md:gap-4 md:px-6">
+          <Link className="flex min-w-0 items-center gap-3" href="/">
             <img
               alt="Happy Tirana Courier"
-              className="h-10 w-[72px] object-contain"
+              className="h-9 w-[64px] shrink-0 object-contain sm:h-10 sm:w-[72px]"
               src="/happy-logo.svg"
             />
-            <span>
+            <span className="min-w-0">
               <span className="type-header-brand block text-happy-orange">
                 Happy Tirana
               </span>
@@ -104,7 +104,7 @@ export function AdminShell({
             />
           </label>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <div className="hidden rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-right sm:block">
               <p className="type-badge text-happy-orange">{session.role}</p>
               <p className="type-secondary text-white/55">{session.name}</p>
@@ -117,7 +117,7 @@ export function AdminShell({
             >
               <LogOut className="h-4 w-4" />
             </button>
-            <div className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-happy-orange">
+            <div className="hidden h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-happy-orange sm:grid">
               <ShieldCheck className="h-5 w-5" />
             </div>
           </div>
@@ -125,12 +125,12 @@ export function AdminShell({
       </header>
 
       <section className="mx-auto grid max-w-7xl gap-5 px-4 py-5 md:px-6 lg:grid-cols-[230px_1fr]">
-        <nav className="admin-panel flex gap-2 overflow-x-auto rounded-3xl border p-2 shadow-happy lg:flex-col">
+        <nav className="admin-panel -mx-1 flex gap-2 overflow-x-auto rounded-2xl border p-2 shadow-happy lg:mx-0 lg:flex-col lg:rounded-3xl">
           {navItems.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link
-                className={`type-cta flex min-h-11 items-center gap-3 rounded-2xl px-4 py-3 transition ${
+                className={`type-cta flex min-h-11 shrink-0 items-center gap-3 rounded-2xl px-4 py-3 transition ${
                   isActive
                     ? "bg-happy-orange text-white happy-pill-shadow"
                     : "text-white/62 hover:bg-white/8 hover:text-white"
@@ -157,7 +157,11 @@ export function AdminShell({
                   {description}
                 </p>
               </div>
-              {action}
+              {action ? (
+                <div className="w-full md:w-auto [&>*]:w-full md:[&>*]:w-auto">
+                  {action}
+                </div>
+              ) : null}
             </div>
           </section>
 
