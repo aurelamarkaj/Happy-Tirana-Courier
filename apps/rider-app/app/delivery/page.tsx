@@ -76,7 +76,15 @@ export default function DeliveryPage() {
   }
 
   const navigationUrl = order
-    ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${order.status === "PICKED_UP" ? `${order.pickupLat},${order.pickupLng};${order.dropoffLat},${order.dropoffLng}` : `${order.dropoffLat},${order.dropoffLng};${order.pickupLat},${order.pickupLng}`}`
+    ? `https://www.google.com/maps/dir/?api=1&origin=${
+        order.status === "PICKED_UP"
+          ? `${order.pickupLat},${order.pickupLng}`
+          : `${order.dropoffLat},${order.dropoffLng}`
+      }&destination=${
+        order.status === "PICKED_UP"
+          ? `${order.dropoffLat},${order.dropoffLng}`
+          : `${order.pickupLat},${order.pickupLng}`
+      }&travelmode=driving`
     : "#";
 
   return (

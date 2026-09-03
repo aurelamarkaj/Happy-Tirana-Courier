@@ -3,7 +3,7 @@
 import { ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { FormEvent, useState } from "react";
 import { loginRider } from "../../lib/api";
 
 export default function RiderLoginPage() {
@@ -13,9 +13,11 @@ export default function RiderLoginPage() {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  async function submit() {
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setSubmitting(true);
     setMessage("");
+
     try {
       await loginRider({ email, password });
       router.replace("/");
@@ -48,7 +50,7 @@ export default function RiderLoginPage() {
 
         <form
           className="rider-panel mx-auto my-8 w-[calc(100%-32px)] max-w-[520px] self-center rounded-2xl border p-5 shadow-happy md:p-8"
-          onSubmit={(event) => event.preventDefault()}
+          onSubmit={submit}
         >
           <div className="grid h-12 w-12 place-items-center rounded-xl bg-happy-orange/15 text-happy-orange">
             <ShieldCheck className="h-6 w-6" />
@@ -98,8 +100,7 @@ export default function RiderLoginPage() {
           <button
             className="type-cta mt-6 flex h-12 w-full items-center justify-center rounded-lg bg-happy-orange text-white happy-pill-shadow"
             disabled={submitting}
-            onClick={submit}
-            type="button"
+            type="submit"
           >
             {submitting ? "Duke hyre..." : "Hyr"}
             <ArrowRight className="ml-2 h-5 w-5" />

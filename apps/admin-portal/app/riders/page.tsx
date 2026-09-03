@@ -13,6 +13,7 @@ import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { AdminMetric, AdminShell } from "../../components/admin-shell";
 import {
   createAdminRider,
+  formatLek,
   getAdminRiders,
   type AdminRider,
 } from "../../lib/api";
@@ -35,8 +36,7 @@ const statusOptions = [
 
 const vehicleOptions = [
   { value: "MOTORBIKE", label: "Motor" },
-  { value: "BICYCLE", label: "Biciklete" },
-  { value: "CAR", label: "Makine" },
+  { value: "DIESEL", label: "Diesel" },
 ];
 
 export default function RidersPage() {
@@ -68,7 +68,7 @@ export default function RidersPage() {
     () => ({
       active: riders.filter((rider) => rider.status === "ACTIVE").length,
       online: riders.filter((rider) => rider.isOnline).length,
-      docs: riders.filter((rider) => Boolean(rider.licenseNumber)).length,
+      blocked: riders.filter((rider) => rider.isDebitBlocked).length,
     }),
     [riders],
   );
@@ -84,7 +84,7 @@ export default function RidersPage() {
         phone: form.phone,
         email: form.email,
         password: form.password,
-        vehicleType: form.vehicleType,
+        vehicleType: form.vehicleType as "MOTORBIKE" | "DIESEL",
         licenseNumber: form.licenseNumber,
         status: form.status as "ACTIVE" | "INACTIVE" | "SUSPENDED",
       });
@@ -136,8 +136,8 @@ export default function RidersPage() {
         />
         <AdminMetric
           icon={FileCheck2}
-          label="Dokumente OK"
-          value={String(metrics.docs)}
+          label="Bllokuar nga debiti"
+          value={String(metrics.blocked)}
         />
       </section>
 
@@ -293,12 +293,23 @@ export default function RidersPage() {
                   {rider.phone} · {rider.email ?? "pa email"} ·{" "}
                   {rider.vehicleType}
                 </p>
+                <p className="type-secondary mt-1 text-white/45">
+                  Debit {formatLek(rider.platformDue)} / limit{" "}
+                  {formatLek(rider.debitLimitAll)}
+                </p>
               </div>
-              <span
-                className={`type-badge w-fit rounded-full px-3 py-2 ${rider.isOnline ? "bg-happy-orange text-white" : "bg-white/10 text-white/58"}`}
-              >
-                {rider.isOnline ? "ONLINE" : rider.status}
-              </span>
+              <div className="flex flex-wrap gap-2">
+                {rider.isDebitBlocked ? (
+                  <span className="type-badge w-fit rounded-full bg-red-500/18 px-3 py-2 text-red-100">
+                    DEBIT
+                  </span>
+                ) : null}
+                <span
+                  className={`type-badge w-fit rounded-full px-3 py-2 ${rider.isOnline ? "bg-happy-orange text-white" : "bg-white/10 text-white/58"}`}
+                >
+                  {rider.isOnline ? "ONLINE" : rider.status}
+                </span>
+              </div>
             </article>
           ))}
         </div>

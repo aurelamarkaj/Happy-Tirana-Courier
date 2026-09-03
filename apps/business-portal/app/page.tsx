@@ -1,8 +1,12 @@
 "use client";
 
 import {
+  BadgeDollarSign,
   BellRing,
+  Calculator,
+  Clock3,
   Minus,
+  Link2,
   LogOut,
   MapPin,
   PackagePlus,
@@ -24,15 +28,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { io } from "socket.io-client";
+import { BusinessRouteMap } from "../components/business-route-map";
 import {
   addBusinessCategory,
   addBusinessProduct,
+  BusinessApiError,
   createBusinessOrder,
   editBusinessCategory,
   editBusinessProduct,
   formatLek,
   getBusinessDashboard,
   logoutBusiness,
+  quoteBusinessOrder,
   removeBusinessCategory,
   removeBusinessProduct,
   searchAddresses,
@@ -40,6 +47,7 @@ import {
   type BusinessCategory,
   type BusinessDashboard,
   type BusinessOrder,
+  type BusinessOrderQuote,
   type BusinessProduct,
 } from "../lib/api";
 import { getBusinessSession } from "../lib/business-session";
@@ -63,7 +71,12 @@ export default function BusinessHome() {
     addressText: "",
     lat: "",
     lng: "",
+    googleMapsUrl: "",
+    readyMinutes: "10",
+    transportFeeOverride: "",
   });
+  const [orderQuote, setOrderQuote] = useState<BusinessOrderQuote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [orderItems, setOrderItems] = useState<Record<string, number>>({});
   const [productForm, setProductForm] = useState({
     name: "",
@@ -196,6 +209,7 @@ export default function BusinessHome() {
       lat: String(address.lat),
       lng: String(address.lng),
     }));
+    setOrderQuote(null);
     setAddressOpen(false);
   }
 
@@ -209,9 +223,87 @@ export default function BusinessHome() {
     });
   }
 
+  function orderApiMessage(error: unknown, fallback: string) {
+    if (!(error instanceof BusinessApiError)) return fallback;
+    if (error.code === "GOOGLE_DIRECTIONS_API_KEY_REQUIRED") {
+      return "Google Directions nuk eshte konfiguruar. Vendos GOOGLE_MAPS_API_KEY ne server.";
+    }
+    if (error.code === "GOOGLE_DIRECTIONS_REQUEST_DENIED") {
+      return "Google Directions refuzoi kerkesen. Kontrollo API key, billing dhe Directions API ne Google Cloud.";
+    }
+    if (
+      error.code === "GOOGLE_DIRECTIONS_OVER_DAILY_LIMIT" ||
+      error.code === "GOOGLE_DIRECTIONS_OVER_QUERY_LIMIT"
+    ) {
+      return "Google Directions ka arritur limitin e perdorimit. Kontrollo quota/billing ne Google Cloud.";
+    }
+    if (
+      error.code === "GOOGLE_DIRECTIONS_ZERO_RESULTS" ||
+      error.code === "GOOGLE_DIRECTIONS_ROUTE_NOT_FOUND"
+    ) {
+      return "Google Directions nuk ktheu rruge per kete destinacion. Kontrollo linkun ose provo perseri.";
+    }
+    if (error.code.startsWith("GOOGLE_DIRECTIONS_")) {
+      return "Google Directions deshtoi perkohesisht. Provo perseri pas pak.";
+    }
+    return fallback;
+  }
+
+  async function quoteOrder() {
+    const lat = Number(orderForm.lat);
+    const lng = Number(orderForm.lng);
+    const hasCoordinates = Number.isFinite(lat) && Number.isFinite(lng);
+    const override = Number(orderForm.transportFeeOverride);
+    const hasOverride =
+      orderForm.transportFeeOverride.trim() !== "" && Number.isFinite(override);
+
+    if (!orderForm.addressText.trim() && !orderForm.googleMapsUrl.trim()) {
+      setMessage("Vendos adresen ose linkun e Google Maps per destinacionin.");
+      return;
+    }
+    if (!hasCoordinates && !orderForm.googleMapsUrl.trim()) {
+      setMessage("Zgjidh adresen nga dropdown ose vendos linkun e Google Maps.");
+      return;
+    }
+
+    setQuoteLoading(true);
+    setMessage("");
+    try {
+      const data = await quoteBusinessOrder({
+        addressText: orderForm.addressText.trim(),
+        lat: hasCoordinates ? lat : undefined,
+        lng: hasCoordinates ? lng : undefined,
+        googleMapsUrl: orderForm.googleMapsUrl.trim() || undefined,
+        transportFeeOverride: hasOverride ? override : undefined,
+      });
+      setOrderQuote(data.quote);
+      setOrderForm((current) => ({
+        ...current,
+        addressText: data.quote.addressText || current.addressText,
+        lat: String(data.quote.lat),
+        lng: String(data.quote.lng),
+        googleMapsUrl: data.quote.googleMapsUrl ?? current.googleMapsUrl,
+      }));
+    } catch (error) {
+      setOrderQuote(null);
+      setMessage(
+        orderApiMessage(
+          error,
+          "Nuk u llogarit dot fatura. Kontrollo zonen, linkun e Google Maps dhe API/Postgres.",
+        ),
+      );
+    } finally {
+      setQuoteLoading(false);
+    }
+  }
+
   async function createOrder() {
     const lat = Number(orderForm.lat);
     const lng = Number(orderForm.lng);
+    const readyMinutes = Number(orderForm.readyMinutes);
+    const override = Number(orderForm.transportFeeOverride);
+    const hasOverride =
+      orderForm.transportFeeOverride.trim() !== "" && Number.isFinite(override);
 
     if (
       !orderForm.customerName.trim() ||
@@ -219,11 +311,16 @@ export default function BusinessHome() {
       !orderForm.addressText.trim() ||
       !Number.isFinite(lat) ||
       !Number.isFinite(lng) ||
+      !Number.isFinite(readyMinutes) ||
       selectedOrderProducts.length === 0
     ) {
       setMessage(
-        "Ploteso klientin, telefonin, adresen nga dropdown dhe zgjidh te pakten nje produkt.",
+        "Ploteso klientin, telefonin, adresen, minutat dhe zgjidh te pakten nje produkt.",
       );
+      return;
+    }
+    if (!orderQuote) {
+      setMessage("Llogarit faturen e transportit para se te krijosh porosine.");
       return;
     }
 
@@ -236,6 +333,9 @@ export default function BusinessHome() {
         addressText: orderForm.addressText.trim(),
         lat,
         lng,
+        googleMapsUrl: orderForm.googleMapsUrl.trim() || undefined,
+        readyMinutes,
+        transportFeeOverride: hasOverride ? override : undefined,
         items: selectedOrderProducts.map((item) => ({
           productId: item.product.id,
           quantity: item.quantity,
@@ -247,18 +347,27 @@ export default function BusinessHome() {
         addressText: "",
         lat: "",
         lng: "",
+        googleMapsUrl: "",
+        readyMinutes: "10",
+        transportFeeOverride: "",
       });
       setOrderItems({});
+      setOrderQuote(null);
       setAddressSuggestions([]);
       setMessage(
         data.offeredRiders.length
           ? `Porosia u krijua dhe iu dergua ${data.offeredRiders.length} motorristëve më të afërt.`
-          : "Porosia u krijua. Nuk ka motorrist online për momentin.",
+          : Number(orderForm.readyMinutes) > 10
+            ? "Porosia u krijua. Njoftimi per motorristet do te dergohet pas 1 minute."
+            : "Porosia u krijua. Nuk ka motorrist online brenda 1km per momentin.",
       );
       await refreshDashboard();
-    } catch {
+    } catch (error) {
       setMessage(
-        "Porosia nuk u krijua dot. Kontrollo adresen, zonen e dorezimit dhe API/Postgres.",
+        orderApiMessage(
+          error,
+          "Porosia nuk u krijua dot. Kontrollo adresen, zonen e dorezimit dhe API/Postgres.",
+        ),
       );
     } finally {
       setBusy(false);
@@ -574,6 +683,7 @@ export default function BusinessHome() {
                 <AddressField
                   onChange={(value) => {
                     setAddressOpen(true);
+                    setOrderQuote(null);
                     setOrderForm((current) => ({
                       ...current,
                       addressText: value,
@@ -587,6 +697,46 @@ export default function BusinessHome() {
                   value={orderForm.addressText}
                 />
 
+                <div className="grid gap-3 md:grid-cols-[1fr_180px]">
+                  <label className="type-input block">
+                    Link Google Maps i destinacionit
+                    <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+                      <Link2 className="mr-3 h-5 w-5 text-happy-orange" />
+                      <input
+                        className="w-full bg-transparent outline-none placeholder:text-white/35"
+                        onChange={(event) => {
+                          setOrderQuote(null);
+                          setOrderForm((current) => ({
+                            ...current,
+                            googleMapsUrl: event.target.value,
+                          }));
+                        }}
+                        placeholder="https://maps.app.goo.gl/..."
+                        value={orderForm.googleMapsUrl}
+                      />
+                    </span>
+                  </label>
+                  <label className="type-input block">
+                    Gati për minuta
+                    <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+                      <Clock3 className="mr-3 h-5 w-5 text-happy-orange" />
+                      <input
+                        className="w-full bg-transparent outline-none placeholder:text-white/35"
+                        min={0}
+                        onChange={(event) =>
+                          setOrderForm((current) => ({
+                            ...current,
+                            readyMinutes: event.target.value,
+                          }))
+                        }
+                        placeholder="10"
+                        type="number"
+                        value={orderForm.readyMinutes}
+                      />
+                    </span>
+                  </label>
+                </div>
+
                 <ProductPicker
                   items={orderItems}
                   onChange={changeOrderItem}
@@ -599,21 +749,80 @@ export default function BusinessHome() {
                     <p className="type-product">
                       Subtotal produktesh: {formatLek(productSubtotal)}
                     </p>
-                    <p className="type-secondary mt-1 text-white/48">
-                      Transporti llogaritet nga zona e adresës. Pas krijimit,
-                      oferta i shkon deri në {5} motorristëve më pranë.
-                    </p>
+                    {orderQuote ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <QuotePill
+                          label="Distanca"
+                          value={`${orderQuote.distanceKm.toFixed(2)} km`}
+                        />
+                        <QuotePill
+                          label="Shtesë Unaza"
+                          value={
+                            orderQuote.ringSurchargeApplied
+                              ? formatLek(orderQuote.ringSurchargeFee)
+                              : "Jo"
+                          }
+                        />
+                        <QuotePill
+                          label="Transport"
+                          value={formatLek(orderQuote.finalTransportFee)}
+                        />
+                      </div>
+                    ) : (
+                      <p className="type-secondary mt-1 text-white/48">
+                        Llogarit distancen nga harta para konfirmimit. Nese
+                        porosia eshte mbi 10 minuta, rideret njoftohen pas 1
+                        minute; pastaj hapet per te gjithe pas 60 sekondash.
+                      </p>
+                    )}
+                    <label className="type-input mt-3 block max-w-xs">
+                      Ndrysho tarifën manualisht
+                      <span className="mt-2 flex h-11 items-center rounded-xl border border-white/10 bg-black/18 px-3">
+                        <BadgeDollarSign className="mr-3 h-5 w-5 text-happy-orange" />
+                        <input
+                          className="w-full bg-transparent outline-none placeholder:text-white/35"
+                          onChange={(event) => {
+                            setOrderQuote(null);
+                            setOrderForm((current) => ({
+                              ...current,
+                              transportFeeOverride: event.target.value,
+                            }));
+                          }}
+                          placeholder="Opsionale"
+                          type="number"
+                          value={orderForm.transportFeeOverride}
+                        />
+                      </span>
+                    </label>
                   </div>
-                  <button
-                    className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange px-5 text-white happy-pill-shadow disabled:opacity-55"
-                    disabled={busy}
-                    onClick={createOrder}
-                    type="button"
-                  >
-                    <Send className="mr-2 h-5 w-5" />
-                    Krijo porosi
-                  </button>
+                  <div className="grid gap-2">
+                    <button
+                      className="type-cta flex h-12 items-center justify-center rounded-xl border border-white/10 bg-white/8 px-5 text-white disabled:opacity-55"
+                      disabled={busy || quoteLoading}
+                      onClick={quoteOrder}
+                      type="button"
+                    >
+                      <Calculator className="mr-2 h-5 w-5" />
+                      {quoteLoading ? "Po llogaritet" : "Llogarit faturën"}
+                    </button>
+                    <button
+                      className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange px-5 text-white happy-pill-shadow disabled:opacity-55"
+                      disabled={busy}
+                      onClick={createOrder}
+                      type="button"
+                    >
+                      <Send className="mr-2 h-5 w-5" />
+                      Krijo porosi
+                    </button>
+                  </div>
                 </div>
+
+                {dashboard ? (
+                  <BusinessRouteMap
+                    business={dashboard.business}
+                    quote={orderQuote}
+                  />
+                ) : null}
               </form>
             </section>
 
@@ -716,6 +925,15 @@ function IconField({
         />
       </span>
     </label>
+  );
+}
+
+function QuotePill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+      <p className="type-badge uppercase text-white/38">{label}</p>
+      <strong className="type-price mt-1 block text-white">{value}</strong>
+    </div>
   );
 }
 

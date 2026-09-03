@@ -66,22 +66,57 @@ export default function AdminHome() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    Promise.all([
-      getAdminBusinesses(),
-      getAdminRiders(),
-      getAdminLiveMap(),
-      getAdminFinance(),
-    ])
-      .then(([businessData, riderData, liveData, financeData]) => {
-        setBusinesses(businessData.businesses);
-        setRiders(riderData.riders);
-        setOrders(liveData.orders);
-        setFinance(financeData);
-        setMessage("");
-      })
-      .catch(() =>
-        setMessage("Dashboard-i nuk u lexua dot nga databaza lokale."),
+    let mounted = true;
+
+    async function loadDashboard() {
+      const [businessResult, riderResult, liveResult, financeResult] =
+        await Promise.allSettled([
+          getAdminBusinesses(),
+          getAdminRiders(),
+          getAdminLiveMap(),
+          getAdminFinance(),
+        ]);
+
+      if (!mounted) return;
+
+      let hasError = false;
+
+      if (businessResult.status === "fulfilled") {
+        setBusinesses(businessResult.value.businesses);
+      } else {
+        hasError = true;
+      }
+
+      if (riderResult.status === "fulfilled") {
+        setRiders(riderResult.value.riders);
+      } else {
+        hasError = true;
+      }
+
+      if (liveResult.status === "fulfilled") {
+        setOrders(liveResult.value.orders);
+      } else {
+        hasError = true;
+      }
+
+      if (financeResult.status === "fulfilled") {
+        setFinance(financeResult.value);
+      } else {
+        hasError = true;
+      }
+
+      setMessage(
+        hasError
+          ? "Dashboard-i u hap, por disa te dhena nuk u lexuan nga API/Postgres."
+          : "",
       );
+    }
+
+    void loadDashboard();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const metrics = useMemo(

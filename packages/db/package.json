@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_initial_postgis.sql -f migrations/002_customer_ordering.sql -f migrations/003_customer_accounts_cart_seed.sql -f migrations/004_customer_catalog_addresses_routes.sql -f migrations/005_guest_carts.sql",
+    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_initial_postgis.sql -f migrations/002_customer_ordering.sql -f migrations/003_customer_accounts_cart_seed.sql -f migrations/004_customer_catalog_addresses_routes.sql -f migrations/005_guest_carts.sql -f migrations/006_rider_dashboard_seed.sql -f migrations/007_admin_business_categories.sql -f migrations/008_admin_auth_seed.sql -f migrations/009_business_auth_seed.sql -f migrations/010_hide_sample_catalog.sql -f migrations/011_extra_dispatch_pricing_rules.sql -f migrations/012_expand_tirana_operational_zone.sql -f migrations/013_superadmin_role.sql",
     "prisma:generate": "prisma generate",
     "typecheck": "tsc --noEmit"
   },

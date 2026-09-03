@@ -39,6 +39,15 @@ export interface BusinessOrder {
   productValue: number;
   transportFee: number;
   totalAmount: number;
+  readyMinutes: number;
+  routeDistanceMeters?: number;
+  routeDistanceSource?: string;
+  routePreference?: string;
+  googleMapsUrl?: string | null;
+  calculatedTransportFee?: number;
+  transportFeeOverridden: boolean;
+  ringSurchargeApplied: boolean;
+  ringSurchargeFee: number;
   riderEarning: number;
   platformCommission: number;
   riderName: string | null;
@@ -56,6 +65,24 @@ export interface AddressSuggestion {
   lng: number;
 }
 
+export interface BusinessOrderQuote {
+  zoneId: string;
+  zoneName: string;
+  lat: number;
+  lng: number;
+  addressText: string;
+  distanceMeters: number;
+  distanceKm: number;
+  distanceSource: string;
+  calculatedTransportFee: number;
+  finalTransportFee: number;
+  transportFeeOverridden: boolean;
+  ringSurchargeApplied: boolean;
+  ringSurchargeFee: number;
+  routePreference: string;
+  googleMapsUrl: string | null;
+}
+
 export interface BusinessDashboard {
   business: {
     id: string;
@@ -63,6 +90,8 @@ export interface BusinessDashboard {
     phone: string;
     email: string | null;
     addressText: string;
+    lat: number;
+    lng: number;
     category: string;
     rating: number;
     etaMinutes: number;
@@ -148,9 +177,12 @@ export async function createBusinessOrder(
   input: {
     customerName: string;
     customerPhone: string;
-    addressText: string;
-    lat: number;
-    lng: number;
+    addressText?: string;
+    lat?: number;
+    lng?: number;
+    googleMapsUrl?: string;
+    readyMinutes?: number;
+    transportFeeOverride?: number;
     productDescription?: string;
     productValue?: number;
     items?: Array<{ productId: string; quantity: number }>;
@@ -163,11 +195,33 @@ export async function createBusinessOrder(
       id: string;
       name: string;
       distanceMeters: number | null;
+      vehicleType?: string;
     }>;
+    dispatchScheduledFor: string;
+    quote: BusinessOrderQuote;
   }>(`/businesses/${businessId}/orders`, {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function quoteBusinessOrder(
+  input: {
+    addressText?: string;
+    lat?: number;
+    lng?: number;
+    googleMapsUrl?: string;
+    transportFeeOverride?: number;
+  },
+  businessId = activeBusinessId(),
+) {
+  return businessFetch<{ quote: BusinessOrderQuote }>(
+    `/businesses/${businessId}/orders/quote`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export async function searchAddresses(query: string) {
@@ -175,6 +229,25 @@ export async function searchAddresses(query: string) {
   return businessFetch<{ suggestions: AddressSuggestion[] }>(
     `/public/addresses/search?${params}`,
   );
+}
+
+export async function getRoute(input: {
+  fromLat: number;
+  fromLng: number;
+  toLat: number;
+  toLng: number;
+}) {
+  const params = new URLSearchParams({
+    fromLat: String(input.fromLat),
+    fromLng: String(input.fromLng),
+    toLat: String(input.toLat),
+    toLng: String(input.toLng),
+  });
+  return businessFetch<{
+    durationSeconds: number;
+    distanceMeters: number;
+    coordinates: Array<{ lat: number; lng: number }>;
+  }>(`/public/routes?${params}`);
 }
 
 export async function addBusinessProduct(

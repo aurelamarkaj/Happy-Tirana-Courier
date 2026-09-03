@@ -25,9 +25,13 @@ import {
   getRiderDashboard,
   logoutRider,
   rejectOrder,
+  reverseAddress,
+  RiderApiError,
+  sendRiderLocation,
   setRiderAvailability,
   type RiderDashboard,
   type RiderOrder,
+  type RoutePoint,
 } from "../lib/api";
 import { getRiderSession } from "../lib/rider-session";
 
@@ -37,7 +41,12 @@ const apiBaseUrl =
 export default function RiderHome() {
   const router = useRouter();
   const [dashboard, setDashboard] = useState<RiderDashboard | null>(null);
-  const [message, setMessage] = useState("Duke lexuar dashboard-in...");
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
+  const [message, setMessage] = useState("");
+  const [currentAddress, setCurrentAddress] = useState(
+    "Vendndodhja shfaqet kur je online.",
+  );
+  const [currentGps, setCurrentGps] = useState<RoutePoint | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -75,15 +84,78 @@ export default function RiderHome() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!dashboard?.rider.isOnline || !navigator.geolocation) {
+      if (!dashboard?.rider.isOnline) {
+        setCurrentAddress("Vendndodhja shfaqet kur je online.");
+        setCurrentGps(null);
+      }
+      return;
+    }
+
+    let reverseTimeout: number | undefined;
+    const watcherId = navigator.geolocation.watchPosition(
+      (position) => {
+        const next = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        setCurrentGps(next);
+        setCurrentAddress("Po lexohet adresa aktuale...");
+        sendRiderLocation({
+          ...next,
+          orderId: dashboard.activeOrder?.id ?? null,
+          speed: position.coords.speed ?? undefined,
+          heading: position.coords.heading ?? undefined,
+        }).catch(() => undefined);
+
+        if (reverseTimeout) window.clearTimeout(reverseTimeout);
+        reverseTimeout = window.setTimeout(() => {
+          reverseAddress(next)
+            .then((data) => {
+              const address = data.address;
+              setCurrentAddress(
+                address
+                  ? address.details || `${address.label}, ${address.city}`
+                  : `${next.lat.toFixed(5)}, ${next.lng.toFixed(5)}`,
+              );
+            })
+            .catch(() =>
+              setCurrentAddress(
+                `${next.lat.toFixed(5)}, ${next.lng.toFixed(5)}`,
+              ),
+            );
+        }, 650);
+      },
+      () => setCurrentAddress("Lejo GPS ne browser per vendndodhjen live."),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 },
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watcherId);
+      if (reverseTimeout) window.clearTimeout(reverseTimeout);
+    };
+  }, [dashboard?.activeOrder?.id, dashboard?.rider.isOnline]);
+
   async function refreshDashboard() {
     try {
       const data = await getRiderDashboard();
       setDashboard(data);
       setMessage("");
-    } catch {
+    } catch (error) {
+      if (error instanceof RiderApiError && error.status === 401) {
+        logoutRider();
+        router.replace("/login");
+        return;
+      }
+
       setMessage(
-        "Nuk u lidh dot me API/Postgres lokal. Kontrollo serverin dhe databazen.",
+        error instanceof RiderApiError && error.code === "RIDER_API_TIMEOUT"
+          ? "API-ja po vonon. Kontrollo nese serveri lokal dhe Postgres jane ndezur."
+          : "Nuk u lidh dot me API/Postgres lokal. Kontrollo serverin dhe databazen.",
       );
+    } finally {
+      setLoadingDashboard(false);
     }
   }
 
@@ -166,43 +238,66 @@ export default function RiderHome() {
   return (
     <main className="rider-page min-h-screen pb-28 text-white">
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#101010]/92 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 md:px-6">
-          <Link className="flex items-center gap-3" href="/">
-            <img
-              alt="Happy Tirana Courier"
-              className="h-10 w-[72px] object-contain"
-              src="/happy-logo.svg"
-            />
-            <span>
-              <span className="type-header-brand block text-happy-orange">
-                Happy Tirana
+        <div className="mx-auto max-w-6xl px-4 py-3 md:px-6">
+          <div className="flex items-center justify-between gap-3">
+            <Link className="flex shrink-0 items-center gap-3" href="/">
+              <img
+                alt="Happy Tirana Courier"
+                className="h-10 w-[72px] object-contain"
+                src="/happy-logo.svg"
+              />
+              <span>
+                <span className="type-header-brand block text-happy-orange">
+                  Happy Tirana
+                </span>
+                <span className="type-secondary block text-white/48">
+                  Rider
+                </span>
               </span>
-              <span className="type-secondary block text-white/48">Rider</span>
-            </span>
-          </Link>
-          <div className="flex items-center gap-2">
-            <button
-              className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/70"
-              onClick={refreshDashboard}
-              type="button"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
-            <button
-              className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/70"
-              onClick={logout}
-              type="button"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            </Link>
+            <div className="hidden min-w-0 flex-1 items-center gap-2 rounded-2xl border border-white/10 bg-white/6 px-3 py-2 text-white/78 md:flex">
+              <MapPin className="h-4 w-4 shrink-0 text-happy-orange" />
+              <span className="type-secondary truncate">{currentAddress}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/70"
+                onClick={refreshDashboard}
+                type="button"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+              <button
+                className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/70"
+                onClick={logout}
+                type="button"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/6 px-3 py-2 text-white/78 md:hidden">
+            <MapPin className="h-4 w-4 shrink-0 text-happy-orange" />
+            <span className="type-secondary truncate">{currentAddress}</span>
           </div>
         </div>
       </header>
 
       <section className="mx-auto max-w-6xl px-4 py-5 md:px-6">
-        {message ? (
+        {loadingDashboard && !dashboard ? (
+          <p className="type-warning mb-4 rounded-2xl border border-happy-orange/25 bg-happy-orange/10 p-4 text-happy-orange">
+            Duke lexuar dashboard-in...
+          </p>
+        ) : message ? (
           <p className="type-warning mb-4 rounded-2xl border border-happy-orange/25 bg-happy-orange/10 p-4 text-happy-orange">
             {message}
+          </p>
+        ) : null}
+        {dashboard?.rider.isDebitBlocked ? (
+          <p className="type-warning mb-4 rounded-2xl border border-red-400/30 bg-red-500/12 p-4 text-red-100">
+            Debiti ndaj platformes ka arritur{" "}
+            {formatLek(dashboard.rider.platformDue)}. Porosite e reja bllokohen
+            deri ne shlyerje.
           </p>
         ) : null}
 
@@ -227,6 +322,23 @@ export default function RiderHome() {
                     Kalo online, merr porosite me te aferta, prano vetem nje
                     here dhe ndiq dorezimin deri ne mbyllje.
                   </p>
+                  <div className="mt-4 flex max-w-2xl items-start gap-3 rounded-2xl border border-white/18 bg-black/55 p-4 shadow-happy backdrop-blur">
+                    <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-happy-orange" />
+                    <div className="min-w-0">
+                      <p className="type-badge uppercase text-white/58">
+                        Vendndodhja aktuale
+                      </p>
+                      <p className="type-body mt-1 text-white">
+                        {currentAddress}
+                      </p>
+                      {currentGps ? (
+                        <p className="type-secondary mt-1 text-white/48">
+                          GPS live: {currentGps.lat.toFixed(5)},{" "}
+                          {currentGps.lng.toFixed(5)}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
                 <span
                   className={`type-badge rounded-full px-3 py-2 ${
@@ -253,8 +365,8 @@ export default function RiderHome() {
                   />
                   <Metric
                     icon={ShieldCheck}
-                    label="20% platforme"
-                    value={formatLek(dashboard?.metrics.platformDue ?? 0)}
+                    label="Debit platforme"
+                    value={formatLek(dashboard?.rider.platformDue ?? 0)}
                   />
                 </div>
                 <button
@@ -263,7 +375,12 @@ export default function RiderHome() {
                       ? "bg-white text-happy-black"
                       : "bg-happy-orange text-white happy-pill-shadow"
                   }`}
-                  disabled={busy || !dashboard}
+                  disabled={
+                    busy ||
+                    !dashboard ||
+                    (!dashboard.rider.isOnline &&
+                      dashboard.rider.isDebitBlocked)
+                  }
                   onClick={toggleOnline}
                   type="button"
                 >
@@ -367,51 +484,51 @@ function RiderOrderTable({
 
       {orders.length ? (
         <>
-        <div className="mt-4 grid gap-3 md:hidden">
-          {orders.map((order) => (
-            <RiderOrderMobileCard
-              busy={busy}
-              key={order.id}
-              onAccept={onAccept}
-              onReject={onReject}
-              order={order}
-              showActions={showActions}
-            />
-          ))}
-        </div>
-        <div className="mt-4 hidden overflow-x-auto rounded-2xl border border-white/10 md:block">
-          <table className="w-full min-w-[860px] table-fixed border-collapse">
-            <thead className="bg-white/[0.06] text-left">
-              <tr className="type-badge uppercase tracking-wide text-white/42">
-                <th className="w-[118px] px-4 py-3 font-semibold">Kodi</th>
-                <th className="w-[160px] px-4 py-3 font-semibold">Biznesi</th>
-                <th className="px-4 py-3 font-semibold">Rruga</th>
-                <th className="w-[160px] px-4 py-3 font-semibold">Klienti</th>
-                <th className="w-[126px] px-4 py-3 text-right font-semibold">
-                  Fitimi
-                </th>
-                <th className="w-[140px] px-4 py-3 font-semibold">Statusi</th>
-                {showActions ? (
-                  <th className="w-[190px] px-4 py-3 text-right font-semibold">
-                    Veprime
+          <div className="mt-4 grid gap-3 md:hidden">
+            {orders.map((order) => (
+              <RiderOrderMobileCard
+                busy={busy}
+                key={order.id}
+                onAccept={onAccept}
+                onReject={onReject}
+                order={order}
+                showActions={showActions}
+              />
+            ))}
+          </div>
+          <div className="mt-4 hidden overflow-x-auto rounded-2xl border border-white/10 md:block">
+            <table className="w-full min-w-[860px] table-fixed border-collapse">
+              <thead className="bg-white/[0.06] text-left">
+                <tr className="type-badge uppercase tracking-wide text-white/42">
+                  <th className="w-[118px] px-4 py-3 font-semibold">Kodi</th>
+                  <th className="w-[160px] px-4 py-3 font-semibold">Biznesi</th>
+                  <th className="px-4 py-3 font-semibold">Rruga</th>
+                  <th className="w-[160px] px-4 py-3 font-semibold">Klienti</th>
+                  <th className="w-[126px] px-4 py-3 text-right font-semibold">
+                    Fitimi
                   </th>
-                ) : null}
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => (
-                <RiderOrderRow
-                  busy={busy}
-                  key={order.id}
-                  onAccept={onAccept}
-                  onReject={onReject}
-                  order={order}
-                  showActions={showActions}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  <th className="w-[140px] px-4 py-3 font-semibold">Statusi</th>
+                  {showActions ? (
+                    <th className="w-[190px] px-4 py-3 text-right font-semibold">
+                      Veprime
+                    </th>
+                  ) : null}
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order) => (
+                  <RiderOrderRow
+                    busy={busy}
+                    key={order.id}
+                    onAccept={onAccept}
+                    onReject={onReject}
+                    order={order}
+                    showActions={showActions}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       ) : (
         <div className="mt-4">
@@ -541,7 +658,9 @@ function RiderOrderRow({
         </p>
       </td>
       <td className="px-4 py-4">
-        <p className="type-product truncate">{order.customerName ?? "Klient"}</p>
+        <p className="type-product truncate">
+          {order.customerName ?? "Klient"}
+        </p>
         <p className="type-secondary mt-1 truncate text-white/42">
           {order.customerPhone ?? "Pa telefon"}
         </p>

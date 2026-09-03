@@ -154,10 +154,6 @@ em {
   box-shadow: 0 16px 38px rgba(255, 85, 0, 0.25);
 }
 
-.leaflet-container {
-  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
-}
-
 .admin-zone-point,
 .admin-map-pin,
 .admin-map-rider {

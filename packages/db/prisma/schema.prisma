@@ -10,6 +10,7 @@ datasource db {
 }
 
 enum UserRole {
+  SUPERADMIN
   ADMIN
   OPERATOR
   BUSINESS
@@ -71,39 +72,55 @@ model User {
 }
 
 model Zone {
-  id           String                               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String
-  city         String                               @default("Tirana")
-  transportFee Decimal                              @map("transport_fee") @db.Decimal(10, 2)
-  polygon      Unsupported("geometry(Polygon,4326)")
-  active       Boolean                              @default(true)
-  createdAt    DateTime                             @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime                             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id              String                                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  city            String                                @default("Tirana")
+  transportFee    Decimal                               @map("transport_fee") @db.Decimal(10, 2)
+  polygon         Unsupported("geometry(Polygon,4326)")
+  active          Boolean                               @default(true)
+  isSurchargeArea Boolean                               @default(false) @map("is_surcharge_area")
+  surchargeFee    Decimal                               @default(100) @map("surcharge_fee") @db.Decimal(10, 2)
+  createdAt       DateTime                              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime                              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("zones")
 }
 
 model Order {
-  id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code               String      @unique
-  businessId         String      @map("business_id") @db.Uuid
-  customerId         String?     @map("customer_id") @db.Uuid
-  deliveryAddressId  String      @map("delivery_address_id") @db.Uuid
-  zoneId             String      @map("zone_id") @db.Uuid
-  assignedRiderId    String?     @map("assigned_rider_id") @db.Uuid
-  productDescription String      @map("product_description")
-  productValue       Decimal     @map("product_value") @db.Decimal(10, 2)
-  transportFee       Decimal     @map("transport_fee") @db.Decimal(10, 2)
-  totalAmount        Decimal     @map("total_amount") @db.Decimal(10, 2)
-  platformCommission Decimal     @map("platform_commission") @db.Decimal(10, 2)
-  riderEarning       Decimal     @map("rider_earning") @db.Decimal(10, 2)
-  status             OrderStatus @default(CREATED)
-  version            Int         @default(1)
-  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
-  acceptedAt         DateTime?   @map("accepted_at") @db.Timestamptz
-  pickedUpAt         DateTime?   @map("picked_up_at") @db.Timestamptz
-  deliveredAt        DateTime?   @map("delivered_at") @db.Timestamptz
-  cancelledAt        DateTime?   @map("cancelled_at") @db.Timestamptz
+  id                     String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                   String      @unique
+  businessId             String      @map("business_id") @db.Uuid
+  customerId             String?     @map("customer_id") @db.Uuid
+  deliveryAddressId      String      @map("delivery_address_id") @db.Uuid
+  zoneId                 String      @map("zone_id") @db.Uuid
+  assignedRiderId        String?     @map("assigned_rider_id") @db.Uuid
+  productDescription     String      @map("product_description")
+  productValue           Decimal     @map("product_value") @db.Decimal(10, 2)
+  transportFee           Decimal     @map("transport_fee") @db.Decimal(10, 2)
+  totalAmount            Decimal     @map("total_amount") @db.Decimal(10, 2)
+  platformCommission     Decimal     @map("platform_commission") @db.Decimal(10, 2)
+  riderEarning           Decimal     @map("rider_earning") @db.Decimal(10, 2)
+  status                 OrderStatus @default(CREATED)
+  version                Int         @default(1)
+  readyMinutes           Int         @default(10) @map("ready_minutes")
+  offerAfter             DateTime    @default(now()) @map("offer_after") @db.Timestamptz
+  initialOfferSentAt     DateTime?   @map("initial_offer_sent_at") @db.Timestamptz
+  escalatedAt            DateTime?   @map("escalated_at") @db.Timestamptz
+  unassignedAlertedAt    DateTime?   @map("unassigned_alerted_at") @db.Timestamptz
+  routeDistanceMeters    Int?        @map("route_distance_meters")
+  routeDistanceSource    String      @default("LOCAL_ESTIMATE") @map("route_distance_source")
+  routePreference        String      @default("SHORTEST_ROAD_IGNORE_TRAFFIC") @map("route_preference")
+  googleMapsUrl          String?     @map("google_maps_url")
+  calculatedTransportFee Decimal?    @map("calculated_transport_fee") @db.Decimal(10, 2)
+  transportFeeOverridden Boolean     @default(false) @map("transport_fee_overridden")
+  ringSurchargeApplied   Boolean     @default(false) @map("ring_surcharge_applied")
+  ringSurchargeFee       Decimal     @default(0) @map("ring_surcharge_fee") @db.Decimal(10, 2)
+  offerScope             String      @default("PENDING") @map("offer_scope")
+  createdAt              DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  acceptedAt             DateTime?   @map("accepted_at") @db.Timestamptz
+  pickedUpAt             DateTime?   @map("picked_up_at") @db.Timestamptz
+  deliveredAt            DateTime?   @map("delivered_at") @db.Timestamptz
+  cancelledAt            DateTime?   @map("cancelled_at") @db.Timestamptz
 
   @@index([status, createdAt])
   @@index([businessId, createdAt])

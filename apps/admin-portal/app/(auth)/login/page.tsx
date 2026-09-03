@@ -3,8 +3,9 @@
 import { ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
-import { loginAdmin } from "../../../lib/api";
+import { FormEvent, useEffect, useState } from "react";
+import { ApiError, loginAdmin } from "../../../lib/api";
+import { getAdminSession } from "../../../lib/admin-session";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,6 +13,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (getAdminSession()) router.replace("/");
+  }, [router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -21,8 +26,12 @@ export default function LoginPage() {
     try {
       await loginAdmin({ email, password });
       router.replace("/");
-    } catch {
-      setMessage("Login nuk u krye. Kontrollo kredencialet ose API/Postgres.");
+    } catch (error) {
+      setMessage(
+        error instanceof ApiError && error.code === "ADMIN_API_TIMEOUT"
+          ? "API-ja po vonon. Kontrollo nese serveri lokal dhe Postgres jane ndezur."
+          : "Login nuk u krye. Kontrollo kredencialet ose API/Postgres.",
+      );
     } finally {
       setSubmitting(false);
     }
