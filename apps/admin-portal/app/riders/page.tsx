@@ -6,6 +6,7 @@ import {
   Plus,
   RadioTower,
   Save,
+  Search,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -46,6 +47,21 @@ export default function RidersPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [fleetFilter, setFleetFilter] = useState("ALL");
+  const filteredRiders = riders.filter(
+    (rider) =>
+      (fleetFilter === "ALL" ||
+        (fleetFilter === "ONLINE"
+          ? rider.isOnline
+          : fleetFilter === "BLOCKED"
+            ? rider.isDebitBlocked
+            : rider.vehicleType === fleetFilter)) &&
+      [rider.name, rider.phone, rider.email, rider.licenseNumber]
+        .join(" ")
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
 
   async function loadRiders() {
     setLoading(true);
@@ -61,6 +77,9 @@ export default function RidersPage() {
   }
 
   useEffect(() => {
+    setShowForm(
+      new URLSearchParams(window.location.search).get("create") === "1",
+    );
     void loadRiders();
   }, []);
 
@@ -123,21 +142,26 @@ export default function RidersPage() {
       eyebrow="Menaxhim"
       title="Motoriste"
     >
-      <section className="grid gap-3 md:grid-cols-3">
+      <section className="entity-metrics grid gap-3 md:grid-cols-3">
         <AdminMetric
           icon={Bike}
           label="Motoriste aktive"
           value={String(metrics.active)}
+          loading={loading}
         />
         <AdminMetric
           icon={RadioTower}
           label="Online tani"
           value={String(metrics.online)}
+          tone="green"
+          loading={loading}
         />
         <AdminMetric
           icon={FileCheck2}
           label="Bllokuar nga debiti"
           value={String(metrics.blocked)}
+          tone="blue"
+          loading={loading}
         />
       </section>
 
@@ -155,7 +179,7 @@ export default function RidersPage() {
             </span>
           </div>
 
-          <form className="mt-4 grid gap-3" onSubmit={submitRider}>
+          <form className="admin-form-grid mt-4" onSubmit={submitRider}>
             <Field label="Emri i motoristit">
               <input
                 className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
@@ -174,6 +198,7 @@ export default function RidersPage() {
                   setForm({ ...form, phone: event.target.value })
                 }
                 placeholder="+35569..."
+                type="tel"
                 required
                 value={form.phone}
               />
@@ -198,6 +223,8 @@ export default function RidersPage() {
                 placeholder="Minimumi 6 karaktere"
                 required
                 type="password"
+                minLength={6}
+                autoComplete="new-password"
                 value={form.password}
               />
             </Field>
@@ -277,8 +304,68 @@ export default function RidersPage() {
             <ShieldCheck className="h-5 w-5 text-happy-orange" />
           </div>
         </div>
-        <div className="mt-4 grid gap-3">
-          {riders.map((rider) => (
+        <div className="list-toolbar">
+          <label className="search-field">
+            <Search size={16} />
+            <input
+              aria-label="Kerko motorist"
+              placeholder="Emri, telefoni ose targa..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            {query && (
+              <button
+                aria-label="Pastro kerkimin"
+                title="Pastro kerkimin"
+                onClick={() => setQuery("")}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </label>
+          <select
+            aria-label="Filtro floten"
+            value={fleetFilter}
+            onChange={(event) => setFleetFilter(event.target.value)}
+          >
+            <option value="ALL">E gjithe flota</option>
+            <option value="ONLINE">Online</option>
+            <option value="BLOCKED">Bllokuar nga debiti</option>
+            <option value="MOTORBIKE">Motor</option>
+            <option value="DIESEL">Diesel</option>
+          </select>
+        </div>
+        <div className="mt-4 grid gap-3" aria-busy={loading}>
+          {!loading && !filteredRiders.length && !message && (
+            <div className="empty-state">
+              <Bike size={30} />
+              <h3>
+                {riders.length
+                  ? "Asnje motorist nuk perputhet"
+                  : "Flota eshte ende bosh"}
+              </h3>
+              {riders.length ? (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setQuery("");
+                    setFleetFilter("ALL");
+                  }}
+                >
+                  Pastro filtrat
+                </button>
+              ) : (
+                <button
+                  className="secondary-button"
+                  onClick={() => setShowForm(true)}
+                >
+                  <Plus size={16} />
+                  Krijo motorist
+                </button>
+              )}
+            </div>
+          )}
+          {filteredRiders.map((rider) => (
             <article
               className="admin-soft flex flex-col justify-between gap-4 rounded-2xl border p-4 md:flex-row md:items-center"
               key={rider.id}
@@ -291,7 +378,9 @@ export default function RidersPage() {
                 </p>
                 <p className="type-secondary mt-1 text-white/45">
                   {rider.phone} · {rider.email ?? "pa email"} ·{" "}
-                  {rider.vehicleType}
+                  {vehicleOptions.find(
+                    (item) => item.value === rider.vehicleType,
+                  )?.label ?? rider.vehicleType}
                 </p>
                 <p className="type-secondary mt-1 text-white/45">
                   Debit {formatLek(rider.platformDue)} / limit{" "}
@@ -307,7 +396,10 @@ export default function RidersPage() {
                 <span
                   className={`type-badge w-fit rounded-full px-3 py-2 ${rider.isOnline ? "bg-happy-orange text-white" : "bg-white/10 text-white/58"}`}
                 >
-                  {rider.isOnline ? "ONLINE" : rider.status}
+                  {rider.isOnline
+                    ? "Online"
+                    : (statusOptions.find((item) => item.value === rider.status)
+                        ?.label ?? rider.status)}
                 </span>
               </div>
             </article>

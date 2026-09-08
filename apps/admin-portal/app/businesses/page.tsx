@@ -8,6 +8,7 @@ import {
   Phone,
   Plus,
   Save,
+  Search,
   Store,
   Tags,
   X,
@@ -64,6 +65,16 @@ export default function BusinessesPage() {
   const [saving, setSaving] = useState(false);
   const [savingCategory, setSavingCategory] = useState(false);
   const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const filteredBusinesses = businesses.filter(
+    (business) =>
+      (statusFilter === "ALL" || business.status === statusFilter) &&
+      [business.name, business.phone, business.email, business.addressText]
+        .join(" ")
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
 
   async function loadBusinesses() {
     setLoading(true);
@@ -94,6 +105,9 @@ export default function BusinessesPage() {
   }
 
   useEffect(() => {
+    setShowForm(
+      new URLSearchParams(window.location.search).get("create") === "1",
+    );
     void loadBusinesses();
   }, []);
 
@@ -202,7 +216,7 @@ export default function BusinessesPage() {
             ) : (
               <Plus className="mr-2 h-5 w-5" />
             )}
-            {showForm ? "Mbyll biznesin" : "Krijo biznes"}
+            {showForm ? "Mbyll formen" : "Krijo biznes"}
           </button>
           <button
             className="type-cta flex h-11 w-full items-center justify-center rounded-xl bg-white/10 px-4 text-white hover:bg-white/15 sm:w-auto"
@@ -222,21 +236,26 @@ export default function BusinessesPage() {
       eyebrow="Menaxhim"
       title="Biznese"
     >
-      <section className="grid gap-3 md:grid-cols-3">
+      <section className="entity-metrics grid gap-3 md:grid-cols-3">
         <AdminMetric
           icon={Building2}
           label="Biznese aktive"
           value={String(metrics.active)}
+          loading={loading}
         />
         <AdminMetric
           icon={CheckCircle2}
           label="Pranojne porosi"
           value={String(metrics.accepting)}
+          tone="green"
+          loading={loading}
         />
         <AdminMetric
           icon={Store}
           label="Kategori"
           value={String(metrics.categories)}
+          tone="blue"
+          loading={loading}
         />
       </section>
 
@@ -258,7 +277,7 @@ export default function BusinessesPage() {
               </span>
             </div>
 
-            <div className="mt-4 grid gap-3">
+            <div className="admin-form-grid mt-4">
               <Field label="Emri i biznesit">
                 <input
                   className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
@@ -287,6 +306,7 @@ export default function BusinessesPage() {
                     setForm({ ...form, phone: event.target.value })
                   }
                   placeholder="+35569..."
+                  type="tel"
                   required
                   value={form.phone}
                 />
@@ -311,6 +331,8 @@ export default function BusinessesPage() {
                   placeholder="Minimumi 6 karaktere"
                   required
                   type="password"
+                  minLength={6}
+                  autoComplete="new-password"
                   value={form.password}
                 />
               </Field>
@@ -404,8 +426,7 @@ export default function BusinessesPage() {
                 <span>
                   <span className="type-product block">Foto cover</span>
                   <span className="type-secondary mt-1 block text-white/50">
-                    Upload nga kompjuteri, deri ne 2MB. Ruhet lokalisht ne
-                    databaze.
+                    Foto deri ne 2MB.
                   </span>
                 </span>
                 <input
@@ -504,8 +525,69 @@ export default function BusinessesPage() {
             {loading ? "Duke lexuar..." : `${businesses.length} subjekte`}
           </span>
         </div>
-        <div className="mt-4 grid gap-3">
-          {businesses.map((business) => (
+        <div className="list-toolbar">
+          <label className="search-field">
+            <Search size={16} />
+            <input
+              aria-label="Kerko biznes"
+              placeholder="Emri, telefoni ose adresa..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            {query && (
+              <button
+                aria-label="Pastro kerkimin"
+                title="Pastro kerkimin"
+                onClick={() => setQuery("")}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </label>
+          <select
+            aria-label="Filtro bizneset sipas statusit"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            <option value="ALL">Te gjitha statuset</option>
+            {statusOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mt-4 grid gap-3" aria-busy={loading}>
+          {!loading && !filteredBusinesses.length && !message && (
+            <div className="empty-state">
+              <Building2 size={30} />
+              <h3>
+                {businesses.length
+                  ? "Asnje biznes nuk perputhet"
+                  : "Nuk ka biznese te regjistruara"}
+              </h3>
+              {businesses.length ? (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setQuery("");
+                    setStatusFilter("ALL");
+                  }}
+                >
+                  Pastro filtrat
+                </button>
+              ) : (
+                <button
+                  className="secondary-button"
+                  onClick={() => setShowForm(true)}
+                >
+                  <Plus size={16} />
+                  Krijo biznes
+                </button>
+              )}
+            </div>
+          )}
+          {filteredBusinesses.map((business) => (
             <article
               className="admin-soft grid gap-4 rounded-2xl border p-4 md:grid-cols-[64px_1fr_auto]"
               key={business.id}
@@ -535,7 +617,8 @@ export default function BusinessesPage() {
                   {business.productCount} produkte
                 </span>
                 <span className="type-badge h-fit rounded-full bg-happy-orange/15 px-3 py-2 text-happy-orange">
-                  {business.status}
+                  {statusOptions.find((item) => item.value === business.status)
+                    ?.label ?? business.status}
                 </span>
               </div>
             </article>

@@ -3,18 +3,19 @@
 import {
   Bike,
   Building2,
+  ChevronRight,
   LayoutDashboard,
   LogOut,
   Map,
+  Menu,
   ReceiptText,
   Route,
-  Search,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   clearAdminSession,
   getAdminSession,
@@ -23,17 +24,16 @@ import {
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/live-map", label: "Harta live", icon: Route },
   { href: "/businesses", label: "Biznese", icon: Building2 },
   { href: "/riders", label: "Motoriste", icon: Bike },
   { href: "/zones", label: "Zona", icon: Map },
-  { href: "/live-map", label: "Live Map", icon: Route },
   { href: "/finance", label: "Financa", icon: ReceiptText },
 ];
 
 export function AdminShell({
   eyebrow,
   title,
-  description,
   action,
   children,
 }: {
@@ -46,6 +46,9 @@ export function AdminShell({
   const pathname = usePathname();
   const router = useRouter();
   const [session, setSession] = useState<AdminSession | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const navigation = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const currentSession = getAdminSession();
@@ -56,119 +59,189 @@ export function AdminShell({
     setSession(currentSession);
   }, [router]);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    navigation.current?.querySelector<HTMLAnchorElement>("a")?.focus();
+    function keydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        menuButton.current?.focus();
+      }
+      if (event.key === "Tab") {
+        const elements =
+          navigation.current?.querySelectorAll<HTMLElement>("a, button");
+        if (!elements?.length) return;
+        const first = elements[0];
+        const last = elements[elements.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    function resize() {
+      if (window.innerWidth >= 1024) setMenuOpen(false);
+    }
+    window.addEventListener("keydown", keydown);
+    window.addEventListener("resize", resize);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", keydown);
+      window.removeEventListener("resize", resize);
+      requestAnimationFrame(() => menuButton.current?.focus());
+    };
+  }, [menuOpen]);
+
   function logout() {
     clearAdminSession();
     router.replace("/login");
   }
-
-  if (!session) {
+  if (!session)
     return (
-      <main className="admin-page grid min-h-screen place-items-center px-4 text-white">
-        <section className="admin-panel rounded-3xl border p-6 text-center shadow-happy">
-          <img
-            alt="Happy Tirana Courier"
-            className="mx-auto h-14 w-24 object-contain"
-            src="/happy-logo.svg"
-          />
-          <p className="type-body mt-4 text-white/58">Po hapet login...</p>
-        </section>
+      <main className="session-loading">
+        <img
+          src="/happy-logo.jpeg"
+          alt="Happy Tirana Courier"
+          width={72}
+          height={72}
+        />
+        <p role="status">Po hapet paneli...</p>
       </main>
     );
-  }
 
   return (
-    <main className="admin-page min-h-screen pb-10 text-white">
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#101010]/92 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 md:gap-4 md:px-6">
-          <Link className="flex min-w-0 items-center gap-3" href="/">
-            <img
-              alt="Happy Tirana Courier"
-              className="h-9 w-[64px] shrink-0 object-contain sm:h-10 sm:w-[72px]"
-              src="/happy-logo.svg"
-            />
-            <span className="min-w-0">
-              <span className="type-header-brand block text-happy-orange">
-                Happy Tirana
-              </span>
-              <span className="type-secondary block text-white/48">
-                Superadmin
-              </span>
-            </span>
-          </Link>
-
-          <label className="admin-soft hidden h-11 max-w-md flex-1 items-center rounded-xl border px-3 lg:flex">
-            <Search className="mr-2 h-4 w-4 shrink-0 text-happy-orange" />
-            <input
-              className="type-input w-full bg-transparent outline-none placeholder:text-white/35"
-              placeholder="Kerko biznes, motorist, porosi..."
-            />
-          </label>
-
-          <div className="flex shrink-0 items-center gap-2">
-            <div className="hidden rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-right sm:block">
-              <p className="type-badge text-happy-orange">{session.role}</p>
-              <p className="type-secondary text-white/55">{session.name}</p>
-            </div>
-            <button
-              className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/70"
-              onClick={logout}
-              title="Dil"
-              type="button"
+    <div className="admin-page admin-frame">
+      <a className="skip-link" href="#main-content">
+        Kalo te permbajtja
+      </a>
+      {menuOpen && (
+        <button
+          className="nav-backdrop"
+          aria-label="Mbyll menune"
+          onClick={() => {
+            setMenuOpen(false);
+            menuButton.current?.focus();
+          }}
+          tabIndex={-1}
+        />
+      )}
+      <aside
+        className={`admin-sidebar ${menuOpen ? "is-open" : ""}`}
+        ref={navigation}
+        aria-label="Menuja kryesore"
+        role={menuOpen ? "dialog" : undefined}
+        aria-modal={menuOpen || undefined}
+      >
+        <Link
+          className="sidebar-brand"
+          href="/"
+          onClick={() => setMenuOpen(false)}
+        >
+          <img src="/happy-logo.jpeg" alt="" width={44} height={44} />
+          <span>
+            <strong>Happy Tirana</strong>
+            <small>COURIER</small>
+          </span>
+        </Link>
+        <div className="sidebar-label">HAPESIRA E PUNES</div>
+        <nav aria-label="Navigimi kryesor">
+          {navItems.map(({ href, label, icon: Icon }) => (
+            <Link
+              key={href}
+              href={href}
+              className={`sidebar-link ${pathname === href ? "is-active" : ""}`}
+              aria-current={pathname === href ? "page" : undefined}
+              onClick={() => setMenuOpen(false)}
             >
-              <LogOut className="h-4 w-4" />
+              <Icon size={18} aria-hidden="true" />
+              <span>{label}</span>
+              {pathname === href && (
+                <ChevronRight
+                  size={15}
+                  className="nav-chevron"
+                  aria-hidden="true"
+                />
+              )}
+            </Link>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="sidebar-location">
+            <Map size={16} />
+            <span>Tirane, Shqiperi</span>
+          </div>
+          <div className="sidebar-account">
+            <span className="account-avatar">
+              <ShieldCheck size={19} />
+            </span>
+            <span className="account-info">
+              <strong>{session.name}</strong>
+              <small>
+                {session.role === "SUPERADMIN" ? "Superadmin" : "Administrator"}
+              </small>
+            </span>
+            <button
+              className="icon-button"
+              title="Dil nga llogaria"
+              aria-label="Dil nga llogaria"
+              onClick={logout}
+            >
+              <LogOut size={17} />
             </button>
-            <div className="hidden h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-happy-orange sm:grid">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
           </div>
         </div>
-      </header>
-
-      <section className="mx-auto grid max-w-7xl gap-5 px-4 py-5 md:px-6 lg:grid-cols-[230px_1fr]">
-        <nav className="admin-panel -mx-1 flex gap-2 overflow-x-auto rounded-2xl border p-2 shadow-happy lg:mx-0 lg:flex-col lg:rounded-3xl">
-          {navItems.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                className={`type-cta flex min-h-11 shrink-0 items-center gap-3 rounded-2xl px-4 py-3 transition ${
-                  isActive
-                    ? "bg-happy-orange text-white happy-pill-shadow"
-                    : "text-white/62 hover:bg-white/8 hover:text-white"
-                }`}
-                href={item.href}
-                key={item.href}
-              >
-                <item.icon className="h-4 w-4 shrink-0" />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="min-w-0 space-y-5">
-          <section className="admin-panel overflow-hidden rounded-3xl border p-5 shadow-happy md:p-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-              <div>
-                <p className="type-badge uppercase tracking-wide text-happy-orange">
-                  {eyebrow}
-                </p>
-                <h1 className="type-screen-title mt-2">{title}</h1>
-                <p className="type-body mt-2 max-w-2xl text-white/58">
-                  {description}
-                </p>
-              </div>
-              {action ? (
-                <div className="w-full md:w-auto [&>*]:w-full md:[&>*]:w-auto">
-                  {action}
-                </div>
-              ) : null}
+        <button
+          className="mobile-menu-close icon-button"
+          onClick={() => {
+            setMenuOpen(false);
+            menuButton.current?.focus();
+          }}
+          aria-label="Mbyll menune"
+        >
+          <X size={20} />
+        </button>
+      </aside>
+      <div className="admin-workspace" inert={menuOpen || undefined}>
+        <header className="workspace-topbar">
+          <div className="topbar-path">
+            <button
+              ref={menuButton}
+              className="icon-button mobile-menu-toggle"
+              aria-label="Hap menune"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen(true)}
+            >
+              <Menu size={21} />
+            </button>
+            <span>Happy Tirana</span>
+            <ChevronRight size={14} aria-hidden="true" />
+            <strong>
+              {navItems.find((item) => item.href === pathname)?.label ?? title}
+            </strong>
+          </div>
+          <span className="topbar-location">Happy Tirana Courier</span>
+        </header>
+        <main className="workspace-content" id="main-content" tabIndex={-1}>
+          <header className="page-heading">
+            <div>
+              <p className="eyebrow">{eyebrow}</p>
+              <h1>{title}</h1>
             </div>
-          </section>
-
+            {action && <div className="page-actions">{action}</div>}
+          </header>
           {children}
-        </div>
-      </section>
-    </main>
+          <footer className="workspace-footer">
+            <span>Happy Tirana Courier</span>
+            <span>Paneli i administrimit</span>
+          </footer>
+        </main>
+      </div>
+    </div>
   );
 }
 
@@ -176,16 +249,33 @@ export function AdminMetric({
   icon: Icon,
   label,
   value,
+  detail,
+  tone = "orange",
+  loading = false,
 }: {
   icon: typeof LayoutDashboard;
   label: string;
   value: string;
+  detail?: string;
+  tone?: "orange" | "green" | "blue" | "violet";
+  loading?: boolean;
 }) {
   return (
-    <article className="admin-panel rounded-2xl border p-4 shadow-happy">
-      <Icon className="h-5 w-5 text-happy-orange" />
-      <p className="type-badge mt-4 uppercase text-white/42">{label}</p>
-      <strong className="type-large-price mt-1 block">{value}</strong>
+    <article className={`metric-item metric-${tone}`} aria-busy={loading}>
+      <div className="metric-top">
+        <p>{label}</p>
+        <span className="metric-icon">
+          <Icon size={18} aria-hidden="true" />
+        </span>
+      </div>
+      {loading ? (
+        <div className="metric-skeleton" aria-label="Duke ngarkuar" />
+      ) : (
+        <strong className="metric-value">{value}</strong>
+      )}
+      {detail && (
+        <p className="metric-detail">{loading ? "Duke ngarkuar..." : detail}</p>
+      )}
     </article>
   );
 }
