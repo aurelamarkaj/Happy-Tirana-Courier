@@ -19,7 +19,7 @@ export default function BusinessLoginPage() {
       "session-expired"
     ) {
       setMessage(
-        "Hyrja e ruajtur nuk eshte me e vlefshme. Hyr me nje llogari te regjistruar nga superadmini.",
+        "Hyrja e ruajtur nuk eshte me e vlefshme. Te lutem, hyr perseri.",
       );
     }
   }, []);
