@@ -2,14 +2,12 @@
 
 import {
   Bike,
+  ArrowRight,
+  AlertTriangle,
   CheckCircle2,
   Clock3,
-  LogOut,
   MapPin,
   PackageCheck,
-  Power,
-  RefreshCw,
-  Route,
   ShieldCheck,
   WalletCards,
   X,
@@ -18,7 +16,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { io } from "socket.io-client";
-import { RiderBottomNav } from "../components/rider-bottom-nav";
+import {
+  OperationsShell,
+  OperationsMetric,
+  OperationsSearch,
+} from "../../shared/operations-shell";
 import {
   acceptOrder,
   formatLek,
@@ -33,6 +35,7 @@ import {
   type RiderOrder,
   type RoutePoint,
 } from "../lib/api";
+import { riderNavigation } from "../components/rider-navigation";
 import { getRiderSession } from "../lib/rider-session";
 
 const apiBaseUrl =
@@ -48,6 +51,9 @@ export default function RiderHome() {
   );
   const [currentGps, setCurrentGps] = useState<RoutePoint | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [orderView, setOrderView] = useState("offers");
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (!getRiderSession()) {
@@ -138,9 +144,11 @@ export default function RiderHome() {
   }, [dashboard?.activeOrder?.id, dashboard?.rider.isOnline]);
 
   async function refreshDashboard() {
+    setLoadingDashboard(true);
     try {
       const data = await getRiderDashboard();
       setDashboard(data);
+      setLoadError(false);
       setMessage("");
     } catch (error) {
       if (error instanceof RiderApiError && error.status === 401) {
@@ -149,6 +157,7 @@ export default function RiderHome() {
         return;
       }
 
+      setLoadError(true);
       setMessage(
         error instanceof RiderApiError && error.code === "RIDER_API_TIMEOUT"
           ? "API-ja po vonon. Kontrollo nese serveri lokal dhe Postgres jane ndezur."
@@ -206,8 +215,8 @@ export default function RiderHome() {
       await refreshDashboard();
       router.push("/delivery");
     } catch {
-      setMessage("Porosia u mor nga dikush tjeter ose oferta skadoi.");
       await refreshDashboard();
+      setMessage("Porosia u mor nga dikush tjeter ose oferta skadoi.");
     } finally {
       setBusy(false);
     }
@@ -235,217 +244,254 @@ export default function RiderHome() {
     [dashboard?.activeOrder],
   );
 
+  const displayedOrders = (
+    orderView === "offers"
+      ? (dashboard?.pendingOffers ?? [])
+      : orderView === "active"
+        ? activeOrders
+        : (dashboard?.recentOrders ?? [])
+  ).filter((order) =>
+    [order.code, order.businessName, order.pickupAddress, order.dropoffAddress]
+      .join(" ")
+      .toLowerCase()
+      .includes(query.trim().toLowerCase()),
+  );
+  const debitPercent =
+    dashboard && dashboard.rider.debitLimitAll > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            (dashboard.rider.platformDue / dashboard.rider.debitLimitAll) * 100,
+          ),
+        )
+      : 0;
+
   return (
-    <main className="rider-page min-h-screen pb-28 text-white">
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#101010]/92 backdrop-blur-xl">
-        <div className="mx-auto max-w-6xl px-4 py-3 md:px-6">
-          <div className="flex items-center justify-between gap-3">
-            <Link className="flex shrink-0 items-center gap-3" href="/">
-              <img
-                alt="Happy Tirana Courier"
-                className="h-10 w-[72px] object-contain"
-                src="/happy-logo.svg"
-              />
-              <span>
-                <span className="type-header-brand block text-happy-orange">
-                  Happy Tirana
-                </span>
-                <span className="type-secondary block text-white/48">
-                  Rider
-                </span>
-              </span>
-            </Link>
-            <div className="hidden min-w-0 flex-1 items-center gap-2 rounded-2xl border border-white/10 bg-white/6 px-3 py-2 text-white/78 md:flex">
-              <MapPin className="h-4 w-4 shrink-0 text-happy-orange" />
-              <span className="type-secondary truncate">{currentAddress}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/70"
-                onClick={refreshDashboard}
-                type="button"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </button>
-              <button
-                className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/70"
-                onClick={logout}
-                type="button"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          <div className="mt-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/6 px-3 py-2 text-white/78 md:hidden">
-            <MapPin className="h-4 w-4 shrink-0 text-happy-orange" />
-            <span className="type-secondary truncate">{currentAddress}</span>
-          </div>
+    <OperationsShell
+      role="Motorist"
+      name={dashboard?.rider.name ?? "Motoristi"}
+      title={dashboard?.rider.name ?? "Pasqyra e motoristit"}
+      active="dashboard"
+      items={riderNavigation}
+      onLogout={logout}
+      onRefresh={refreshDashboard}
+      refreshing={loadingDashboard}
+      action={
+        <div className="ops-availability">
+          <span className="ops-availability-label">
+            {busy
+              ? "Duke ndryshuar..."
+              : dashboard?.rider.isOnline
+                ? "Online"
+                : "Offline"}
+          </span>
+          <button
+            className="ops-switch"
+            role="switch"
+            aria-label="Disponueshmeria online"
+            aria-checked={dashboard?.rider.isOnline ?? false}
+            title={dashboard?.rider.isOnline ? "Kalo offline" : "Kalo online"}
+            disabled={
+              busy ||
+              loadingDashboard ||
+              loadError ||
+              !dashboard ||
+              (!dashboard.rider.isOnline && dashboard.rider.isDebitBlocked)
+            }
+            onClick={toggleOnline}
+          >
+            <span />
+          </button>
         </div>
-      </header>
-
-      <section className="mx-auto max-w-6xl px-4 py-5 md:px-6">
-        {loadingDashboard && !dashboard ? (
-          <p className="type-warning mb-4 rounded-2xl border border-happy-orange/25 bg-happy-orange/10 p-4 text-happy-orange">
-            Duke lexuar dashboard-in...
-          </p>
-        ) : message ? (
-          <p className="type-warning mb-4 rounded-2xl border border-happy-orange/25 bg-happy-orange/10 p-4 text-happy-orange">
-            {message}
-          </p>
-        ) : null}
-        {dashboard?.rider.isDebitBlocked ? (
-          <p className="type-warning mb-4 rounded-2xl border border-red-400/30 bg-red-500/12 p-4 text-red-100">
-            Debiti ndaj platformes ka arritur{" "}
-            {formatLek(dashboard.rider.platformDue)}. Porosite e reja bllokohen
-            deri ne shlyerje.
-          </p>
-        ) : null}
-
-        <section className="rider-panel overflow-hidden rounded-3xl border shadow-happy">
-          <div className="relative min-h-64 p-5 md:p-6">
-            <img
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover opacity-[0.42]"
-              src="/catalog/courier-bike.webp"
-            />
-            <div className="absolute inset-0 bg-gradient-to-br from-black/96 via-black/82 to-black/58" />
-            <div className="relative flex min-h-52 flex-col justify-between gap-8">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="type-badge uppercase tracking-wide text-happy-orange">
-                    Panel operimi
-                  </p>
-                  <h1 className="type-screen-title mt-2">
-                    {dashboard?.rider.name ?? "Motorist"}
-                  </h1>
-                  <p className="type-body mt-2 max-w-xl text-white/80">
-                    Kalo online, merr porosite me te aferta, prano vetem nje
-                    here dhe ndiq dorezimin deri ne mbyllje.
-                  </p>
-                  <div className="mt-4 flex max-w-2xl items-start gap-3 rounded-2xl border border-white/18 bg-black/55 p-4 shadow-happy backdrop-blur">
-                    <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-happy-orange" />
-                    <div className="min-w-0">
-                      <p className="type-badge uppercase text-white/58">
-                        Vendndodhja aktuale
-                      </p>
-                      <p className="type-body mt-1 text-white">
-                        {currentAddress}
-                      </p>
-                      {currentGps ? (
-                        <p className="type-secondary mt-1 text-white/48">
-                          GPS live: {currentGps.lat.toFixed(5)},{" "}
-                          {currentGps.lng.toFixed(5)}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-                <span
-                  className={`type-badge rounded-full px-3 py-2 ${
-                    dashboard?.rider.isOnline
-                      ? "bg-happy-orange text-white"
-                      : "bg-white/10 text-white/58"
-                  }`}
-                >
-                  {dashboard?.rider.isOnline ? "ONLINE" : "OFFLINE"}
-                </span>
-              </div>
-
-              <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <Metric
-                    icon={PackageCheck}
-                    label="Sot"
-                    value={`${dashboard?.metrics.todayDeliveries ?? 0} porosi`}
-                  />
-                  <Metric
-                    icon={WalletCards}
-                    label="Fitime sot"
-                    value={formatLek(dashboard?.metrics.todayEarnings ?? 0)}
-                  />
-                  <Metric
-                    icon={ShieldCheck}
-                    label="Debit platforme"
-                    value={formatLek(dashboard?.rider.platformDue ?? 0)}
-                  />
-                </div>
-                <button
-                  className={`type-cta flex h-full min-h-16 items-center justify-center rounded-2xl transition ${
-                    dashboard?.rider.isOnline
-                      ? "bg-white text-happy-black"
-                      : "bg-happy-orange text-white happy-pill-shadow"
-                  }`}
-                  disabled={
-                    busy ||
-                    !dashboard ||
-                    (!dashboard.rider.isOnline &&
-                      dashboard.rider.isDebitBlocked)
-                  }
-                  onClick={toggleOnline}
-                  type="button"
-                >
-                  <Power className="mr-2 h-5 w-5" />
-                  {dashboard?.rider.isOnline ? "Kalo Offline" : "Kalo Online"}
-                </button>
-              </div>
-            </div>
+      }
+    >
+      <div className="ops-meta">
+        <span
+          className={`ops-dot ${dashboard?.rider.isOnline ? "online" : ""}`}
+        />
+        {dashboard?.rider.isOnline ? "Ne linje per dergesa" : "Jashte linje"}
+      </div>
+      {loadError ? (
+        <div className="ops-notice" role="alert">
+          <AlertTriangle size={18} />
+          <span>
+            Nuk u ngarkuan te dhenat.
+            {dashboard ? " Po shfaqen te dhenat e fundit." : ""}
+          </span>
+          <button
+            className="ops-link"
+            onClick={refreshDashboard}
+            disabled={loadingDashboard}
+          >
+            Riprovo
+          </button>
+        </div>
+      ) : message ? (
+        <p className="ops-notice" role="status">
+          {message}
+        </p>
+      ) : null}
+      {dashboard?.rider.isDebitBlocked && (
+        <div className="ops-notice is-danger" role="alert">
+          <AlertTriangle size={19} />
+          <span>
+            Debiti ka arritur {formatLek(dashboard.rider.platformDue)}. Ofertat
+            e reja jane bllokuar deri ne shlyerje.
+          </span>
+          <Link className="ops-link" href="/earnings">
+            Shiko bilancin
+            <ArrowRight size={15} />
+          </Link>
+        </div>
+      )}
+      <section className="ops-metrics" aria-label="Statistikat e motoristit">
+        <OperationsMetric
+          icon={PackageCheck}
+          label="Dergesa sot"
+          value={dashboard ? String(dashboard.metrics.todayDeliveries) : "--"}
+          detail="Porosi te dorezuara"
+          tone="blue"
+          loading={loadingDashboard}
+        />
+        <OperationsMetric
+          icon={WalletCards}
+          label="Fitime sot"
+          value={dashboard ? formatLek(dashboard.metrics.todayEarnings) : "--"}
+          detail="Pjesa jote e transportit"
+          tone="green"
+          loading={loadingDashboard}
+        />
+        <OperationsMetric
+          icon={ShieldCheck}
+          label="Debit platforme"
+          value={dashboard ? formatLek(dashboard.rider.platformDue) : "--"}
+          detail="Per t'u shlyer"
+          loading={loadingDashboard}
+        />
+      </section>
+      {dashboard?.activeOrder && (
+        <section className="ops-delivery-banner">
+          <div>
+            <strong>Dergesa aktive: {dashboard.activeOrder.code}</strong>
+            <p>
+              {dashboard.activeOrder.businessName} /{" "}
+              {dashboard.activeOrder.dropoffAddress}
+            </p>
           </div>
+          <Link className="ops-primary" href="/delivery">
+            Vazhdo dergesen
+            <ArrowRight size={17} />
+          </Link>
         </section>
-
-        <section className="mt-5 space-y-5">
+      )}
+      <section className="ops-section">
+        <div className="ops-section-heading">
+          <h2>Porosite e tua</h2>
+          <span>{dashboard ? displayedOrders.length : "--"} porosi</span>
+        </div>
+        <div className="ops-toolbar">
+          <div
+            className="ops-segments"
+            role="group"
+            aria-label="Pamja e porosive"
+          >
+            {[
+              { id: "offers", label: "Oferta te reja" },
+              { id: "active", label: "Ne dorezim" },
+              { id: "history", label: "Historia" },
+            ].map((item) => (
+              <button
+                key={item.id}
+                aria-pressed={orderView === item.id}
+                onClick={() => {
+                  setOrderView(item.id);
+                  setQuery("");
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <OperationsSearch value={query} onChange={setQuery} />
+        </div>
+        {loadingDashboard && !dashboard ? (
+          <p role="status">Po ngarkohen porosite...</p>
+        ) : dashboard ? (
           <RiderOrderTable
             emptyText={
-              dashboard?.rider.isOnline
-                ? "Nuk ka oferta të reja afër teje për momentin."
-                : "Kalo online që të marrësh oferta të reja."
+              query
+                ? "Asnje porosi nuk perputhet me kerkimin."
+                : orderView === "offers"
+                  ? dashboard.rider.isDebitBlocked
+                    ? "Ofertat jane bllokuar nga debiti."
+                    : dashboard.rider.isOnline
+                      ? "Nuk ka oferta te reja per momentin."
+                      : "Je offline. Nuk po merr oferta te reja."
+                  : "Nuk ka porosi ne kete liste."
             }
-            kicker="Oferta të reja"
+            kicker=""
+            title=""
+            orders={displayedOrders}
+            showActions={
+              orderView === "offers" && !dashboard.rider.isDebitBlocked
+            }
+            busy={busy || loadError}
             onAccept={accept}
             onReject={reject}
-            orders={dashboard?.pendingOffers ?? []}
-            showActions
-            title="Në pritje"
-            busy={busy}
           />
-
-          <RiderOrderTable
-            emptyText="Nuk ke porosi aktive në dorëzim."
-            kicker="Live"
-            orders={activeOrders}
-            title="Në dorëzim"
-            busy={busy}
-          />
-
-          <RiderOrderTable
-            emptyText="Nuk ke ende porosi të përfunduara."
-            kicker="Historia"
-            orders={dashboard?.recentOrders ?? []}
-            title="Të përfunduara"
-            busy={busy}
-          />
-        </section>
+        ) : null}
+        {query && (
+          <button className="ops-link" onClick={() => setQuery("")}>
+            Pastro kerkimin
+          </button>
+        )}
       </section>
-
-      <RiderBottomNav />
-    </main>
-  );
-}
-
-function Metric({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Route;
-  label: string;
-  value: string;
-}) {
-  return (
-    <article className="rider-hero-metric rounded-2xl border p-4">
-      <Icon className="h-5 w-5 text-happy-orange" />
-      <p className="type-badge mt-4 uppercase text-white/72">{label}</p>
-      <strong className="type-price mt-1 block text-white">{value}</strong>
-    </article>
+      <div className="ops-rider-status">
+        <section>
+          <div className="ops-section-heading">
+            <h2>Vendndodhja aktuale</h2>
+            <MapPin size={17} />
+          </div>
+          <div className="ops-location">
+            <MapPin size={19} />
+            <p>{currentAddress}</p>
+          </div>
+          {currentGps && (
+            <p className="ops-subtle">
+              {currentGps.lat.toFixed(5)}, {currentGps.lng.toFixed(5)}
+            </p>
+          )}
+        </section>
+        <section>
+          <div className="ops-section-heading">
+            <h2>Limiti i debitit</h2>
+            <Link className="ops-link" href="/earnings">
+              Bilanci
+              <ArrowRight size={15} />
+            </Link>
+          </div>
+          <div className="ops-debit-row">
+            <strong>
+              {dashboard ? formatLek(dashboard.rider.platformDue) : "--"}
+            </strong>
+            <span className="ops-subtle">
+              nga {dashboard ? formatLek(dashboard.rider.debitLimitAll) : "--"}
+            </span>
+          </div>
+          <div
+            className={`ops-debit-meter ${dashboard?.rider.isDebitBlocked ? "is-blocked" : ""}`}
+            role="meter"
+            aria-label="Perdorimi i limitit te debitit"
+            aria-valuenow={debitPercent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <span style={{ width: debitPercent + "%" }} />
+          </div>
+        </section>
+      </div>
+    </OperationsShell>
   );
 }
 
@@ -470,17 +516,19 @@ function RiderOrderTable({
 }) {
   return (
     <section className="rider-panel rounded-3xl border p-5 shadow-happy">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <p className="type-badge uppercase tracking-wide text-happy-orange">
-            {kicker}
-          </p>
-          <h2 className="type-section-title mt-1">{title}</h2>
+      {title && (
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="type-badge uppercase tracking-wide text-happy-orange">
+              {kicker}
+            </p>
+            <h2 className="type-section-title mt-1">{title}</h2>
+          </div>
+          <span className="type-secondary text-white/45">
+            {orders.length} porosi
+          </span>
         </div>
-        <span className="type-secondary text-white/45">
-          {orders.length} porosi
-        </span>
-      </div>
+      )}
 
       {orders.length ? (
         <>
@@ -509,7 +557,7 @@ function RiderOrderTable({
                   </th>
                   <th className="w-[140px] px-4 py-3 font-semibold">Statusi</th>
                   {showActions ? (
-                    <th className="w-[190px] px-4 py-3 text-right font-semibold">
+                    <th className="w-[220px] px-4 py-3 text-right font-semibold">
                       Veprime
                     </th>
                   ) : null}
@@ -613,7 +661,7 @@ function RiderOrderMobileCard({
 
 function MobileMoney({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl bg-black/18 p-3">
+    <div className="ops-money">
       <p className="type-badge uppercase text-white/38">{label}</p>
       <strong className="type-price mt-1 block">{formatLek(value)}</strong>
     </div>

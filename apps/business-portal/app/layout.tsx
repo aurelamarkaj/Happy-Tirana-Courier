@@ -6,10 +6,11 @@ import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/700.css";
 import "@fontsource/manrope/800.css";
 import "./globals.css";
+import "../../shared/operations.css";
 
 export const metadata: Metadata = {
   title: "Happy Tirana Courier Business",
-  description: "Business portal for creating and tracking courier orders"
+  description: "Business portal for creating and tracking courier orders",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
