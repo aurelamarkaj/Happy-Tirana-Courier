@@ -3,7 +3,7 @@
 import { ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { loginRider } from "../../lib/api";
 
 export default function RiderLoginPage() {
@@ -12,6 +12,17 @@ export default function RiderLoginPage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (
+      new URLSearchParams(window.location.search).get("reason") ===
+      "session-expired"
+    ) {
+      setMessage(
+        "Hyrja e ruajtur nuk eshte me e vlefshme. Hyr me nje llogari te regjistruar nga superadmini.",
+      );
+    }
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -92,7 +103,10 @@ export default function RiderLoginPage() {
           </div>
 
           {message ? (
-            <p className="type-warning mt-4 rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-red-500">
+            <p
+              role="alert"
+              className="type-warning mt-4 rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-red-500"
+            >
               {message}
             </p>
           ) : null}

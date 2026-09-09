@@ -15,6 +15,7 @@ import {
 import { riderNavigation } from "../../components/rider-navigation";
 import {
   logoutRider,
+  RiderApiError,
   formatLek,
   getRiderDashboard,
   type RiderDashboard,
@@ -41,7 +42,12 @@ export default function EarningsPage() {
     try {
       setDashboard(await getRiderDashboard());
       setMessage("");
-    } catch {
+    } catch (error) {
+      if (error instanceof RiderApiError && error.status === 401) {
+        logoutRider();
+        router.replace("/login?reason=session-expired");
+        return;
+      }
       setMessage("Nuk u ngarkuan fitimet. Provo perseri.");
     } finally {
       setLoading(false);

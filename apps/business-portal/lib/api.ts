@@ -168,9 +168,30 @@ export function logoutBusiness() {
 }
 
 export async function getBusinessDashboard(businessId = activeBusinessId()) {
-  return businessFetch<BusinessDashboard>(
-    `/businesses/${businessId}/dashboard`,
-  );
+  if (
+    typeof businessId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      businessId,
+    )
+  ) {
+    clearBusinessSession();
+    throw new BusinessApiError(401, "BUSINESS_SESSION_EXPIRED");
+  }
+  try {
+    return await businessFetch<BusinessDashboard>(
+      `/businesses/${businessId}/dashboard`,
+    );
+  } catch (error) {
+    if (
+      error instanceof BusinessApiError &&
+      error.status === 404 &&
+      error.code === "BUSINESS_NOT_FOUND"
+    ) {
+      clearBusinessSession();
+      throw new BusinessApiError(401, "BUSINESS_SESSION_EXPIRED");
+    }
+    throw error;
+  }
 }
 
 export async function createBusinessOrder(

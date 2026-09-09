@@ -3,7 +3,7 @@
 import { ArrowRight, LockKeyhole, Mail, Store } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { loginBusiness } from "../../lib/api";
 
 export default function BusinessLoginPage() {
@@ -12,6 +12,17 @@ export default function BusinessLoginPage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (
+      new URLSearchParams(window.location.search).get("reason") ===
+      "session-expired"
+    ) {
+      setMessage(
+        "Hyrja e ruajtur nuk eshte me e vlefshme. Hyr me nje llogari te regjistruar nga superadmini.",
+      );
+    }
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -22,9 +33,7 @@ export default function BusinessLoginPage() {
       await loginBusiness({ email, password });
       router.replace("/");
     } catch {
-      setMessage(
-        "Login nuk u krye. Kontrollo email-in dhe password-in.",
-      );
+      setMessage("Login nuk u krye. Kontrollo email-in dhe password-in.");
     } finally {
       setSubmitting(false);
     }
@@ -84,7 +93,10 @@ export default function BusinessLoginPage() {
           </div>
 
           {message ? (
-            <p className="type-warning mt-4 rounded-xl border border-happy-orange/30 bg-happy-orange/10 p-3 text-happy-orange">
+            <p
+              role="alert"
+              className="type-warning mt-4 rounded-xl border border-happy-orange/30 bg-happy-orange/10 p-3 text-happy-orange"
+            >
               {message}
             </p>
           ) : null}

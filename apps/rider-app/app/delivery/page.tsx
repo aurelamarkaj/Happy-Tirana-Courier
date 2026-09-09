@@ -18,6 +18,7 @@ import { riderNavigation } from "../../components/rider-navigation";
 import { RiderMap } from "../../components/rider-map";
 import {
   logoutRider,
+  RiderApiError,
   acceptOrder,
   formatLek,
   getRiderDashboard,
@@ -49,7 +50,12 @@ export default function DeliveryPage() {
       const data = await getRiderDashboard();
       setDashboard(data);
       setMessage("");
-    } catch {
+    } catch (error) {
+      if (error instanceof RiderApiError && error.status === 401) {
+        logoutRider();
+        router.replace("/login?reason=session-expired");
+        return;
+      }
       setMessage("Nuk u lexua dot porosia. Provo perseri.");
     } finally {
       setLoading(false);

@@ -149,7 +149,28 @@ export async function loginRider(input: { email: string; password: string }) {
 export async function getRiderDashboard() {
   const session = getRiderSession();
   if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");
-  return riderFetch<RiderDashboard>(`/riders/${session.id}/dashboard`);
+  if (
+    typeof session.id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      session.id,
+    )
+  ) {
+    clearRiderSession();
+    throw new RiderApiError(401, "RIDER_SESSION_EXPIRED");
+  }
+  try {
+    return await riderFetch<RiderDashboard>(`/riders/${session.id}/dashboard`);
+  } catch (error) {
+    if (
+      error instanceof RiderApiError &&
+      error.status === 404 &&
+      error.code === "RIDER_NOT_FOUND"
+    ) {
+      clearRiderSession();
+      throw new RiderApiError(401, "RIDER_SESSION_EXPIRED");
+    }
+    throw error;
+  }
 }
 
 export async function setRiderAvailability(

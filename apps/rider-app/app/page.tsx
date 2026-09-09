@@ -153,7 +153,7 @@ export default function RiderHome() {
     } catch (error) {
       if (error instanceof RiderApiError && error.status === 401) {
         logoutRider();
-        router.replace("/login");
+        router.replace("/login?reason=session-expired");
         return;
       }
 

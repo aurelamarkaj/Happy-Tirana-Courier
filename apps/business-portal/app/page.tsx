@@ -64,7 +64,7 @@ const defaultProductImage = "/catalog/product-grocery-basket.webp";
 export default function BusinessHome() {
   const router = useRouter();
   const [dashboard, setDashboard] = useState<BusinessDashboard | null>(null);
-  const [message, setMessage] = useState("Po hapet dashboard-i i biznesit...");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -193,7 +193,7 @@ export default function BusinessHome() {
     } catch (error) {
       if (error instanceof BusinessApiError && error.status === 401) {
         logoutBusiness();
-        router.replace("/login");
+        router.replace("/login?reason=session-expired");
         return;
       }
       setLoadError(true);
