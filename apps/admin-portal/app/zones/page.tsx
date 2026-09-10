@@ -138,7 +138,7 @@ export default function ZonesPage() {
             <label className="type-input block">
               Emri zones
               <input
-                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) => setName(event.target.value)}
                 placeholder="P.sh. Tirana Qender"
                 required
@@ -148,7 +148,7 @@ export default function ZonesPage() {
             <label className="type-input block">
               Qyteti
               <input
-                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) => setCity(event.target.value)}
                 placeholder="Tirana"
                 required
@@ -158,7 +158,7 @@ export default function ZonesPage() {
             <label className="type-input block">
               Transporti reference
               <input
-                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) => setTransportFee(event.target.value)}
                 placeholder="250 ALL"
                 required
@@ -183,7 +183,7 @@ export default function ZonesPage() {
               <label className="type-input block">
                 Tarifa shtese
                 <input
-                  className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) => setSurchargeFee(event.target.value)}
                   placeholder="100 ALL"
                   required

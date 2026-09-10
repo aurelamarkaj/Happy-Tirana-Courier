@@ -104,7 +104,7 @@ export function OperationsShell({
         aria-label="Menuja kryesore"
       >
         <Link className="ops-brand" href="/">
-          <img src="/happy-logo.jpeg" alt="" width={44} height={44} />
+          <img src="/happy-logo.svg" alt="" width={44} height={44} />
           <span>
             <strong>Happy Tirana</strong>
             <small>COURIER</small>

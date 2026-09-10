@@ -6,6 +6,7 @@ import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/700.css";
 import "@fontsource/manrope/800.css";
 import "./globals.css";
+import "../../shared/forms.css";
 
 export const metadata: Metadata = {
   title: "Happy Tirana Courier Admin",

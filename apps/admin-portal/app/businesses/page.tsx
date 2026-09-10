@@ -280,7 +280,7 @@ export default function BusinessesPage() {
             <div className="admin-form-grid mt-4">
               <Field label="Emri i biznesit">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, name: event.target.value })
                   }
@@ -291,7 +291,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Emri ligjor">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, legalName: event.target.value })
                   }
@@ -301,7 +301,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Telefoni i biznesit">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, phone: event.target.value })
                   }
@@ -313,7 +313,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Email per login">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, email: event.target.value })
                   }
@@ -324,7 +324,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Password per biznesin">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, password: event.target.value })
                   }
@@ -338,7 +338,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Kategoria e biznesit">
                 <select
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, category: event.target.value })
                   }
@@ -360,7 +360,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Statusi i biznesit">
                 <select
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, status: event.target.value })
                   }
@@ -380,7 +380,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Adresa e biznesit">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, addressText: event.target.value })
                   }
@@ -391,7 +391,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Latitude">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, lat: event.target.value })
                   }
@@ -401,7 +401,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Longitude">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, lng: event.target.value })
                   }
@@ -411,7 +411,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Pershkrim i shkurter">
                 <textarea
-                  className="admin-input min-h-20 w-full rounded-xl border px-3 py-3 outline-none focus:border-happy-orange"
+                  className="admin-input min-h-20 w-full rounded-xl border px-3 py-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, description: event.target.value })
                   }
@@ -472,7 +472,7 @@ export default function BusinessesPage() {
           <form className="mt-5 grid gap-3" onSubmit={submitCategory}>
             <Field label="Emri i kategorise">
               <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setCategoryForm({
                     ...categoryForm,

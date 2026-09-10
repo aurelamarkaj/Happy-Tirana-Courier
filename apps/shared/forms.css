@@ -1,0 +1,15 @@
+/* Keep form focus consistent across all three portals. */
+body :is(.admin-page, .business-page, .rider-page, .ops-frame) :is(input, select, textarea):focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* Icon fields draw their border on the wrapper, not the input itself. */
+body :is(.admin-page, .business-page, .rider-page, .ops-frame) :is(label, span, div):has(> :is(input, select, textarea):focus) {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+body :is(.admin-page, .business-page, .rider-page, .ops-frame) :is(input[type="checkbox"], input[type="radio"]):focus-visible {
+  outline: 2px solid #a1a4aa;
+  outline-offset: 3px;
+}

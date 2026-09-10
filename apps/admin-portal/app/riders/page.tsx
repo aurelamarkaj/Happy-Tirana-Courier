@@ -182,7 +182,7 @@ export default function RidersPage() {
           <form className="admin-form-grid mt-4" onSubmit={submitRider}>
             <Field label="Emri i motoristit">
               <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setForm({ ...form, name: event.target.value })
                 }
@@ -193,7 +193,7 @@ export default function RidersPage() {
             </Field>
             <Field label="Telefoni i motoristit">
               <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setForm({ ...form, phone: event.target.value })
                 }
@@ -205,7 +205,7 @@ export default function RidersPage() {
             </Field>
             <Field label="Email">
               <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setForm({ ...form, email: event.target.value })
                 }
@@ -216,7 +216,7 @@ export default function RidersPage() {
             </Field>
             <Field label="Password">
               <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setForm({ ...form, password: event.target.value })
                 }
@@ -230,7 +230,7 @@ export default function RidersPage() {
             </Field>
             <Field label="Mjeti">
               <select
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setForm({ ...form, vehicleType: event.target.value })
                 }
@@ -249,7 +249,7 @@ export default function RidersPage() {
             </Field>
             <Field label="Targa / ID dokumenti">
               <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setForm({ ...form, licenseNumber: event.target.value })
                 }
@@ -259,7 +259,7 @@ export default function RidersPage() {
             </Field>
             <Field label="Statusi i motoristit">
               <select
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setForm({ ...form, status: event.target.value })
                 }

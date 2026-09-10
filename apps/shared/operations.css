@@ -20,8 +20,8 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.ops-frame :where(a, button, input, select, textarea):focus-visible {
-  outline: 2px solid var(--ops-orange);
+.ops-frame :where(a, button):focus-visible {
+  outline: 2px solid #a1a4aa;
   outline-offset: 4px;
 }
 .ops-frame input,
@@ -58,8 +58,6 @@
 .ops-brand img {
   width: 44px;
   height: 44px;
-  border-radius: 6px;
-  background: white;
   object-fit: contain;
 }
 .ops-brand strong {

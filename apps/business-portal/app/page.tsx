@@ -271,7 +271,7 @@ export default function BusinessHome() {
   function orderApiMessage(error: unknown, fallback: string) {
     if (!(error instanceof BusinessApiError)) return fallback;
     if (error.code === "GOOGLE_DIRECTIONS_API_KEY_REQUIRED") {
-      return "Google Directions nuk eshte konfiguruar. Vendos GOOGLE_MAPS_API_KEY ne server.";
+      return "Transporti nuk mund të llogaritet sepse shërbimi i distancave nuk është konfiguruar. Kontakto administratorin për ta aktivizuar.";
     }
     if (error.code === "GOOGLE_DIRECTIONS_REQUEST_DENIED") {
       return "Google Directions refuzoi kerkesen. Kontrollo API key, billing dhe Directions API ne Google Cloud.";
@@ -291,10 +291,17 @@ export default function BusinessHome() {
     if (error.code.startsWith("GOOGLE_DIRECTIONS_")) {
       return "Google Directions deshtoi perkohesisht. Provo perseri pas pak.";
     }
+    if (error.code === "DELIVERY_ZONE_NOT_FOUND") {
+      return "Destinacioni është jashtë zonave të dorëzimit. Zgjidh një adresë brenda zonës së shërbimit.";
+    }
+    if (error.code === "DELIVERY_LOCATION_NOT_RESOLVED") {
+      return "Destinacioni nuk u gjet. Zgjidh adresën nga lista ose kontrollo linkun e Google Maps.";
+    }
     return fallback;
   }
 
   async function quoteOrder() {
+    setOrderQuote(null);
     const lat = Number(orderForm.lat);
     const lng = Number(orderForm.lng);
     const hasCoordinates =
@@ -681,7 +688,7 @@ export default function BusinessHome() {
           </button>
         </div>
       )}
-      {message && !loadingDashboard && (
+      {message && !loadingDashboard && view !== "new" && (
         <p className="ops-notice" role="status">
           {message}
         </p>
@@ -841,7 +848,7 @@ export default function BusinessHome() {
                         Subtotal produktesh: {formatLek(productSubtotal)}
                       </p>
                       {orderQuote ? (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2" aria-live="polite">
                           <QuotePill
                             label="Distanca"
                             value={`${orderQuote.distanceKm.toFixed(2)} km`}
@@ -857,6 +864,10 @@ export default function BusinessHome() {
                           <QuotePill
                             label="Transport"
                             value={formatLek(orderQuote.finalTransportFee)}
+                          />
+                          <QuotePill
+                            label="Totali për pagesë"
+                            value={formatLek(productSubtotal + orderQuote.finalTransportFee)}
                           />
                         </div>
                       ) : (
@@ -910,6 +921,12 @@ export default function BusinessHome() {
                       </button>
                     </div>
                   </div>
+
+                  {message && (
+                    <p className="ops-notice" role="alert">
+                      {message}
+                    </p>
+                  )}
 
                   {dashboard ? (
                     <BusinessRouteMap
@@ -1132,7 +1149,7 @@ function Field({
     <label className="type-input block">
       {label}
       <input
-        className="business-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+        className="business-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         value={value}
@@ -1714,7 +1731,7 @@ function CategorySelect({
     <label className="type-input block">
       {label}
       <select
-        className="business-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+        className="business-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
         disabled={categories.length === 0}
         onChange={(event) => onChange(event.target.value)}
         value={value}

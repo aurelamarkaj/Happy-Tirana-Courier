@@ -78,10 +78,10 @@ export default function LoginPage() {
           <div className="mt-6 grid gap-4">
             <label className="type-input block">
               Email
-              <span className="admin-input mt-2 flex h-12 items-center rounded-xl border px-3">
+              <span className="admin-input mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <Mail className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none"
+                  className="w-full bg-transparent outline-none focus:outline-none"
                   onChange={(event) => setEmail(event.target.value)}
                   required
                   type="email"
@@ -91,10 +91,10 @@ export default function LoginPage() {
             </label>
             <label className="type-input block">
               Fjalekalimi
-              <span className="admin-input mt-2 flex h-12 items-center rounded-xl border px-3">
+              <span className="admin-input mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <LockKeyhole className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none"
+                  className="w-full bg-transparent outline-none focus:outline-none"
                   onChange={(event) => setPassword(event.target.value)}
                   required
                   type="password"

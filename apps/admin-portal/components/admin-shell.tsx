@@ -105,7 +105,7 @@ export function AdminShell({
     return (
       <main className="session-loading">
         <img
-          src="/happy-logo.jpeg"
+          src="/happy-logo.svg"
           alt="Happy Tirana Courier"
           width={72}
           height={72}
@@ -142,7 +142,7 @@ export function AdminShell({
           href="/"
           onClick={() => setMenuOpen(false)}
         >
-          <img src="/happy-logo.jpeg" alt="" width={44} height={44} />
+          <img src="/happy-logo.svg" alt="" width={44} height={44} />
           <span>
             <strong>Happy Tirana</strong>
             <small>COURIER</small>

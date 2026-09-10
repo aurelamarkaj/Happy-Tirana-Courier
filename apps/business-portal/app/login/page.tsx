@@ -66,10 +66,10 @@ export default function BusinessLoginPage() {
           <div className="mt-6 grid gap-4">
             <label className="type-input block">
               Email
-              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <Mail className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none placeholder:text-white/35"
+                  className="w-full bg-transparent outline-none focus:outline-none placeholder:text-white/35"
                   onChange={(event) => setEmail(event.target.value)}
                   type="email"
                   required
@@ -79,10 +79,10 @@ export default function BusinessLoginPage() {
             </label>
             <label className="type-input block">
               Password
-              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <LockKeyhole className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none placeholder:text-white/35"
+                  className="w-full bg-transparent outline-none focus:outline-none placeholder:text-white/35"
                   onChange={(event) => setPassword(event.target.value)}
                   required
                   type="password"
