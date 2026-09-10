@@ -4,6 +4,7 @@ declare global {
   interface Window {
     google?: any;
     happyGoogleMapsReady?: Promise<any>;
+    happyGoogleMapsLoaded?: () => void;
   }
 }
 
@@ -16,15 +17,18 @@ export function hasGoogleMapsKey() {
 export function loadGoogleMaps() {
   if (typeof window === "undefined") return Promise.reject(new Error("NO_WINDOW"));
   if (!hasGoogleMapsKey()) return Promise.reject(new Error("GOOGLE_MAPS_API_KEY_MISSING"));
-  if (window.google?.maps) return Promise.resolve(window.google);
+  if (window.google?.maps?.Map) return Promise.resolve(window.google);
   if (window.happyGoogleMapsReady) return window.happyGoogleMapsReady;
 
   window.happyGoogleMapsReady = new Promise((resolve, reject) => {
+    window.happyGoogleMapsLoaded = () => resolve(window.google);
     const existing = document.querySelector<HTMLScriptElement>(
       'script[src*="maps.googleapis.com/maps/api/js"]',
     );
     if (existing) {
-      existing.addEventListener("load", () => resolve(window.google));
+      existing.addEventListener("load", () => {
+        if (window.google?.maps?.Map) resolve(window.google);
+      });
       existing.addEventListener("error", () => reject(new Error("GOOGLE_MAPS_LOAD_FAILED")));
       return;
     }
@@ -33,13 +37,13 @@ export function loadGoogleMaps() {
     const params = new URLSearchParams({
       key: googleMapsApiKey,
       loading: "async",
+      callback: "happyGoogleMapsLoaded",
       libraries: "geometry",
       v: "weekly",
     });
     script.src = `https://maps.googleapis.com/maps/api/js?${params}`;
     script.async = true;
     script.defer = true;
-    script.onload = () => resolve(window.google);
     script.onerror = () => reject(new Error("GOOGLE_MAPS_LOAD_FAILED"));
     document.head.appendChild(script);
   });
