@@ -1,4 +1,7 @@
-import { getGoogleRoadRoute } from "./google-routes.js";
+import {
+  getEstimatedRoadRoute,
+  getGoogleRoadRoute,
+} from "./google-routes.js";
 
 export interface Point {
   lat: number;
@@ -104,9 +107,10 @@ export async function buildItinerary(
     const waypoint = (p: Point) => ({
       waypoint: { location: { latLng: { latitude: p.lat, longitude: p.lng } } },
     });
-    const response = await fetch(
-      "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix",
-      {
+    try {
+      const response = await fetch(
+        "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix",
+        {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -121,25 +125,40 @@ export async function buildItinerary(
           routingPreference: "TRAFFIC_UNAWARE",
         }),
         signal: AbortSignal.timeout(10000),
-      },
-    );
-    if (!response.ok) throw new Error("GOOGLE_DIRECTIONS_REQUEST_FAILED");
-    const elements = (await response.json()) as Array<{
-      originIndex?: number;
-      destinationIndex?: number;
-      distanceMeters?: number;
-      condition?: string;
-      status?: { code?: number };
-    }>;
-    const distances = points.map(() => points.map(() => Infinity));
-    for (const e of elements) {
-      const i = e.originIndex ?? 0,
-        j = e.destinationIndex ?? 0;
-      if (i < 0 || j < 0 || i >= points.length || j >= points.length) continue;
-      if (!e.status?.code && e.condition === "ROUTE_EXISTS")
-        distances[i][j] = e.distanceMeters ?? 0;
+        },
+      );
+      if (!response.ok) throw new Error("GOOGLE_DIRECTIONS_REQUEST_FAILED");
+      const elements = (await response.json()) as Array<{
+        originIndex?: number;
+        destinationIndex?: number;
+        distanceMeters?: number;
+        condition?: string;
+        status?: { code?: number };
+      }>;
+      const distances = points.map(() => points.map(() => Infinity));
+      for (const e of elements) {
+        const i = e.originIndex ?? 0,
+          j = e.destinationIndex ?? 0;
+        if (i < 0 || j < 0 || i >= points.length || j >= points.length) continue;
+        if (!e.status?.code && e.condition === "ROUTE_EXISTS")
+          distances[i][j] = e.distanceMeters ?? 0;
+      }
+      ordered = optimizeStops(stops, distances);
+    } catch {
+      const distances = points.map((from) =>
+        points.map((to) =>
+          from === to
+            ? 0
+            : getEstimatedRoadRoute({
+                originLat: from.lat,
+                originLng: from.lng,
+                destinationLat: to.lat,
+                destinationLng: to.lng,
+              }).distanceMeters,
+        ),
+      );
+      ordered = optimizeStops(stops, distances);
     }
-    ordered = optimizeStops(stops, distances);
   }
   const destination = ordered[ordered.length - 1];
   const route = await getGoogleRoadRoute(key, {

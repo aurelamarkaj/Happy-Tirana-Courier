@@ -43,6 +43,24 @@ Default ports:
 - Business portal: `http://localhost:3001`
 - Rider app: `http://localhost:3002`
 
+## Docker demo deployment
+
+The production stack is defined in `docker-compose.prod.yml`. It builds all
+three portals and the API into one reusable image, keeps PostgreSQL and app
+ports bound to the server loopback interface, and expects a manually managed
+reverse proxy in front of it. Copy `.env.production.example` to `.env`, fill
+the secrets, then run:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+The stack includes its own nginx gateway. The only published application port
+is `http://127.0.0.1:13305`; point the external Plesk proxy at that target.
+The gateway redirects `/` to `/business` and routes `/admin`, `/business`,
+`/rider`, `/api`, and `/socket.io` to the internal containers. PostgreSQL and
+the individual app ports are not published on the host.
+
 Active portal routes:
 
 - Admin `http://localhost:3000/login`: create/manage businesses, riders, zones, live map, and finance.

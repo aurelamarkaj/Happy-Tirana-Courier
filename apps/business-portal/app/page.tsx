@@ -59,6 +59,7 @@ import { getBusinessSession } from "../lib/business-session";
 
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const defaultProductImage = "/catalog/product-grocery-basket.webp";
 
 export default function BusinessHome() {
@@ -93,7 +94,7 @@ export default function BusinessHome() {
     window.history.pushState(
       null,
       "",
-      next === "orders" ? "/" : "/?view=" + next,
+      next === "orders" ? basePath || "/" : `${basePath}/?view=${next}`,
     );
     window.scrollTo({ top: 0, behavior: "instant" });
   }

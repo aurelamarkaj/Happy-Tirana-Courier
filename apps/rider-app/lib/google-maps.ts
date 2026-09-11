@@ -5,13 +5,18 @@ declare global {
     google?: any;
     happyGoogleMapsReady?: Promise<any>;
     happyGoogleMapsLoaded?: () => void;
+    gm_authFailure?: () => void;
   }
 }
 
 const googleMapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 export function hasGoogleMapsKey() {
-  return Boolean(googleMapsApiKey && !googleMapsApiKey.includes("replace-with"));
+  return Boolean(
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_ENABLED !== "false" &&
+      googleMapsApiKey &&
+      !googleMapsApiKey.includes("replace-with"),
+  );
 }
 
 export function loadGoogleMaps() {
@@ -21,7 +26,18 @@ export function loadGoogleMaps() {
   if (window.happyGoogleMapsReady) return window.happyGoogleMapsReady;
 
   window.happyGoogleMapsReady = new Promise((resolve, reject) => {
-    window.happyGoogleMapsLoaded = () => resolve(window.google);
+    let authFailed = false;
+    window.gm_authFailure = () => {
+      authFailed = true;
+      reject(new Error("GOOGLE_MAPS_AUTH_FAILED"));
+    };
+    window.happyGoogleMapsLoaded = () => {
+      window.setTimeout(() => {
+        if (authFailed || !window.google?.maps?.Map)
+          reject(new Error("GOOGLE_MAPS_LOAD_FAILED"));
+        else resolve(window.google);
+      }, 500);
+    };
     const existing = document.querySelector<HTMLScriptElement>(
       'script[src*="maps.googleapis.com/maps/api/js"]',
     );

@@ -19,6 +19,17 @@ const { pool } = await import("@happy-tirana/db");
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const corsOrigins = [
+  /^http:\/\/localhost:30\d\d$/,
+  /^http:\/\/localhost:31\d\d$/,
+  /^http:\/\/127\.0\.0\.1:30\d\d$/,
+  /^http:\/\/127\.0\.0\.1:31\d\d$/,
+  ...allowedOrigins,
+];
 const sampleBusinessIds = [
   "10000000-0000-4000-8000-000000000001",
   "10000000-0000-4000-8000-000000000002",
@@ -37,12 +48,7 @@ const sampleBusinessIds = [
 ];
 const io = new Server(server, {
   cors: {
-    origin: [
-      /^http:\/\/localhost:30\d\d$/,
-      /^http:\/\/localhost:31\d\d$/,
-      /^http:\/\/127\.0\.0\.1:30\d\d$/,
-      /^http:\/\/127\.0\.0\.1:31\d\d$/,
-    ],
+    origin: corsOrigins,
     credentials: true,
   },
 });
@@ -66,12 +72,7 @@ const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim() ?? "";
 app.use(helmet());
 app.use(
   cors({
-    origin: [
-      /^http:\/\/localhost:30\d\d$/,
-      /^http:\/\/localhost:31\d\d$/,
-      /^http:\/\/127\.0\.0\.1:30\d\d$/,
-      /^http:\/\/127\.0\.0\.1:31\d\d$/,
-    ],
+    origin: corsOrigins,
     credentials: true,
   }),
 );
@@ -294,7 +295,10 @@ async function calculateBusinessTransportQuote(
     transportFeeOverridden: hasOverride,
     ringSurchargeApplied: ringSurchargeFee > 0,
     ringSurchargeFee: roundMoney(ringSurchargeFee || 0),
-    routePreference: "SHORTEST_ROAD_IGNORE_TRAFFIC",
+    routePreference:
+      route.source === "HAVERSINE_ROAD_ESTIMATE_FALLBACK"
+        ? "ESTIMATED_ROAD_DISTANCE_FALLBACK"
+        : "SHORTEST_ROAD_IGNORE_TRAFFIC",
     googleMapsUrl: input.googleMapsUrl?.trim() || null,
   };
 }

@@ -12,10 +12,43 @@ interface GoogleRoute {
   polyline?: { encodedPolyline?: string };
 }
 
+export function getEstimatedRoadRoute(input: RouteInput) {
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+  const distanceBetween = (
+    from: { lat: number; lng: number },
+    to: { lat: number; lng: number },
+  ) => {
+    const earthRadiusMeters = 6_371_000;
+    const latDelta = toRadians(to.lat - from.lat);
+    const lngDelta = toRadians(to.lng - from.lng);
+    const a =
+      Math.sin(latDelta / 2) ** 2 +
+      Math.cos(toRadians(from.lat)) *
+        Math.cos(toRadians(to.lat)) *
+        Math.sin(lngDelta / 2) ** 2;
+    return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+  const points = [
+    { lat: input.originLat, lng: input.originLng },
+    ...(input.intermediates ?? []),
+    { lat: input.destinationLat, lng: input.destinationLng },
+  ];
+  const straightLineMeters = points
+    .slice(1)
+    .reduce((total, point, index) => total + distanceBetween(points[index], point), 0);
+  const distanceMeters = Math.round(straightLineMeters * 1.2);
+
+  return {
+    distanceMeters,
+    durationSeconds: Math.round(distanceMeters / (30_000 / 3_600)),
+    encodedPolyline: "",
+    source: "HAVERSINE_ROAD_ESTIMATE_FALLBACK",
+  };
+}
+
 export async function getGoogleRoadRoute(apiKey: string, input: RouteInput) {
-  if (!apiKey || apiKey.toLowerCase().includes("replace-with")) {
-    throw new Error("GOOGLE_DIRECTIONS_API_KEY_REQUIRED");
-  }
+  if (!apiKey || apiKey.toLowerCase().includes("replace-with"))
+    return getEstimatedRoadRoute(input);
   try {
     const response = await fetch(
       "https://routes.googleapis.com/directions/v2:computeRoutes",
@@ -88,12 +121,6 @@ export async function getGoogleRoadRoute(apiKey: string, input: RouteInput) {
       source: "GOOGLE_ROUTES_SHORTEST_ROAD_IGNORE_TRAFFIC",
     };
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.startsWith("GOOGLE_DIRECTIONS_")
-    ) {
-      throw error;
-    }
-    throw new Error("GOOGLE_DIRECTIONS_REQUEST_FAILED");
+    return getEstimatedRoadRoute(input);
   }
 }

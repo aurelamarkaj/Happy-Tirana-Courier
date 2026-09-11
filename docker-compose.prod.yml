@@ -1,0 +1,103 @@
+name: happy-tirana
+
+x-app: &app
+  image: happy-tirana-app:demo
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: happy_tirana
+      POSTGRES_USER: happy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./packages/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U happy -d happy_tirana"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    <<: *app
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_URL}/api
+        NEXT_PUBLIC_SOCKET_URL: ${PUBLIC_URL}
+        NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
+        NEXT_PUBLIC_GOOGLE_MAPS_ENABLED: ${NEXT_PUBLIC_GOOGLE_MAPS_ENABLED:-true}
+    command: ["./node_modules/.bin/tsx", "apps/api/src/server.ts"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${PUBLIC_URL}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+      RIDER_DEBIT_LIMIT_ALL: ${RIDER_DEBIT_LIMIT_ALL:-10000}
+      NEARBY_RIDER_RADIUS_METERS: ${NEARBY_RIDER_RADIUS_METERS:-1000}
+      OFFER_ESCALATION_SECONDS: ${OFFER_ESCALATION_SECONDS:-60}
+      ADMIN_UNASSIGNED_ALERT_MINUTES: ${ADMIN_UNASSIGNED_ALERT_MINUTES:-5}
+      PORT: ${PORT:-4000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  admin:
+    <<: *app
+    command: ["npm", "run", "start", "-w", "@happy-tirana/admin-portal"]
+    environment:
+      NEXT_PUBLIC_BASE_PATH: /admin
+    depends_on:
+      api:
+        condition: service_healthy
+
+  business:
+    <<: *app
+    command: ["npm", "run", "start", "-w", "@happy-tirana/business-portal"]
+    environment:
+      NEXT_PUBLIC_BASE_PATH: /business
+    depends_on:
+      api:
+        condition: service_healthy
+
+  rider:
+    <<: *app
+    command: ["npm", "run", "start", "-w", "@happy-tirana/rider-app"]
+    environment:
+      NEXT_PUBLIC_BASE_PATH: /rider
+    depends_on:
+      api:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      admin:
+        condition: service_started
+      business:
+        condition: service_started
+      rider:
+        condition: service_started
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:13305:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/gateway-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres-data:
