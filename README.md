@@ -24,6 +24,18 @@ No login credentials are committed to source control. Set `ADMIN_EMAIL`,
 `ADMIN_PHONE`, and `ADMIN_PASSWORD` in your local `.env` before running
 `npm run db:create-admin`.
 
+New installations start with no demo businesses, products, riders or orders.
+Create the administrator with `db:create-admin`, then add actual accounts from
+the dashboard. The base service area, address suggestions and business category
+options remain available.
+
+For the reviewed development dataset only, the manual script
+`packages/db/maintenance/clear-test-data.sql` removes known test accounts and
+their related data while preserving administrators and operational settings.
+It is not part of migrations and refuses to run if unreviewed business or
+non-admin accounts are present. Back up the database before explicitly running
+it with `docker compose exec -T postgres psql -U happy -d happy_tirana < packages/db/maintenance/clear-test-data.sql`.
+
 Default ports:
 
 - API: `http://localhost:4000`
