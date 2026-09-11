@@ -56,6 +56,7 @@ export function ZoneBuilderMap({
   const zoneOverlaysRef = useRef<Array<{ setMap: (map: any) => void }>>([]);
   const pointsRef = useRef(points);
   const onPointsChangeRef = useRef(onPointsChange);
+  const [mapReady, setMapReady] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   pointsRef.current = points;
@@ -69,6 +70,7 @@ export function ZoneBuilderMap({
         if (cancelled || !mapElementRef.current) return;
         if (mapRef.current) return;
         mapRef.current = createBaseMap(mapElementRef.current);
+        setMapReady(true);
         mapRef.current.addListener("click", (event: any) => {
           const latLng = event.latLng;
           if (!latLng) return;
@@ -125,7 +127,7 @@ export function ZoneBuilderMap({
       );
       fitMapToPoints(mapRef.current, points, 32);
     }
-  }, [points]);
+  }, [mapReady, points]);
 
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps) return;
@@ -156,7 +158,7 @@ export function ZoneBuilderMap({
 
     if (boundsPoints.length > 2 && pointsRef.current.length === 0)
       fitMapToPoints(mapRef.current, boundsPoints, 40);
-  }, [zones]);
+  }, [mapReady, zones]);
 
   return (
     <div className="relative min-h-[360px] overflow-hidden rounded-2xl border border-white/10 bg-[#171717] sm:min-h-[528px]">
@@ -193,6 +195,7 @@ export function AdminLiveMap({
   const overlaysRef = useRef<Array<{ setMap: (map: any) => void }>>([]);
   const requestedRoutesRef = useRef(new Set<string>());
   const [routePaths, setRoutePaths] = useState<Record<string, MapPoint[]>>({});
+  const [mapReady, setMapReady] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
@@ -202,6 +205,7 @@ export function AdminLiveMap({
       .then(() => {
         if (cancelled || !mapElementRef.current) return;
         if (!mapRef.current) mapRef.current = createBaseMap(mapElementRef.current);
+        setMapReady(true);
       })
       .catch(() => setLoadError(true));
 
@@ -295,7 +299,7 @@ export function AdminLiveMap({
     });
 
     if (boundsPoints.length > 1) fitMapToPoints(mapRef.current, boundsPoints);
-  }, [orders, riders, routePaths]);
+  }, [mapReady, orders, riders, routePaths]);
 
   return (
     <div className="relative min-h-[360px] overflow-hidden rounded-2xl border border-white/10 bg-[#171717] sm:min-h-[528px]">
