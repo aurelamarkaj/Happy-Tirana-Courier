@@ -20,12 +20,14 @@ export function OpenStreetAdminMap({
   zones = [],
   riders = [],
   orders = [],
+  routePaths = {},
   onPointsChange,
 }: {
   points?: MapPoint[];
   zones?: AdminZone[];
   riders?: AdminRider[];
   orders?: AdminLiveOrder[];
+  routePaths?: Record<string, MapPoint[]>;
   onPointsChange?: (points: MapPoint[]) => void;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
@@ -147,8 +149,14 @@ export function OpenStreetAdminMap({
       orders.forEach((order) => {
         const pickup: [number, number] = [order.pickupLat, order.pickupLng];
         const dropoff: [number, number] = [order.dropoffLat, order.dropoffLng];
+        const routePath =
+          routePaths[order.id]?.length > 1
+            ? routePaths[order.id].map(
+                (point) => [point.lat, point.lng] as [number, number],
+              )
+            : [pickup, dropoff];
         bounds.push(pickup, dropoff);
-        L.polyline([pickup, dropoff], {
+        L.polyline(routePath, {
           color: "#ff5500",
           opacity: 0.9,
           weight: 4,
@@ -165,7 +173,7 @@ export function OpenStreetAdminMap({
     return () => {
       cancelled = true;
     };
-  }, [orders, points, ready, riders, zones]);
+  }, [orders, points, ready, riders, routePaths, zones]);
 
   return <div className="absolute inset-0 z-0" ref={elementRef} />;
 }

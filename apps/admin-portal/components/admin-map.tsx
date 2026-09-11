@@ -8,6 +8,7 @@ import type {
   AdminZone,
   MapPoint,
 } from "../lib/api";
+import { getPublicRoute } from "../lib/api";
 import {
   createHappyMarker,
   hasGoogleMapsKey,
@@ -190,6 +191,8 @@ export function AdminLiveMap({
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const overlaysRef = useRef<Array<{ setMap: (map: any) => void }>>([]);
+  const requestedRoutesRef = useRef(new Set<string>());
+  const [routePaths, setRoutePaths] = useState<Record<string, MapPoint[]>>({});
   const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
@@ -206,6 +209,45 @@ export function AdminLiveMap({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const missing = orders.filter(
+      (order) =>
+        !routePaths[order.id] && !requestedRoutesRef.current.has(order.id),
+    );
+    missing.forEach((order) => requestedRoutesRef.current.add(order.id));
+    if (!missing.length) return;
+
+    Promise.all(
+      missing.map(async (order) => {
+        try {
+          const route = await getPublicRoute({
+            fromLat: order.pickupLat,
+            fromLng: order.pickupLng,
+            toLat: order.dropoffLat,
+            toLng: order.dropoffLng,
+          });
+          return [order.id, route.coordinates] as const;
+        } catch {
+          requestedRoutesRef.current.delete(order.id);
+          return [order.id, []] as const;
+        }
+      }),
+    ).then((routes) => {
+      if (cancelled) return;
+      const successfulRoutes = routes.filter(([, points]) => points.length > 1);
+      if (!successfulRoutes.length) return;
+      setRoutePaths((current) => ({
+        ...current,
+        ...Object.fromEntries(successfulRoutes),
+      }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orders, routePaths]);
 
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps) return;
@@ -233,12 +275,16 @@ export function AdminLiveMap({
     orders.forEach((order) => {
       const pickup = { lat: order.pickupLat, lng: order.pickupLng };
       const dropoff = { lat: order.dropoffLat, lng: order.dropoffLng };
+      const routePath =
+        routePaths[order.id]?.length > 1
+          ? routePaths[order.id]
+          : [pickup, dropoff];
       boundsPoints.push(pickup, dropoff);
       overlaysRef.current.push(
         new window.google.maps.Polyline({
           geodesic: true,
           map: mapRef.current,
-          path: [pickup, dropoff],
+          path: routePath,
           strokeColor: "#FF5500",
           strokeOpacity: 0.8,
           strokeWeight: 4,
@@ -249,13 +295,17 @@ export function AdminLiveMap({
     });
 
     if (boundsPoints.length > 1) fitMapToPoints(mapRef.current, boundsPoints);
-  }, [orders, riders]);
+  }, [orders, riders, routePaths]);
 
   return (
     <div className="relative min-h-[360px] overflow-hidden rounded-2xl border border-white/10 bg-[#171717] sm:min-h-[528px]">
       <div className="absolute inset-0" ref={mapElementRef} />
       {loadError || !hasGoogleMapsKey() ? (
-        <OpenStreetAdminMap riders={riders} orders={orders} />
+        <OpenStreetAdminMap
+          riders={riders}
+          orders={orders}
+          routePaths={routePaths}
+        />
       ) : null}
       <div className="absolute left-4 top-4 z-[500] rounded-2xl bg-[#101010]/90 px-4 py-3 text-white shadow-happy backdrop-blur">
         <p className="type-badge uppercase tracking-wide text-white/55">

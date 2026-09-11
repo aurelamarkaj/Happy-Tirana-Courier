@@ -12,6 +12,9 @@ interface GoogleRoute {
   polyline?: { encodedPolyline?: string };
 }
 
+const googleMapsHttpReferrer =
+  process.env.GOOGLE_MAPS_HTTP_REFERRER?.trim() ?? "";
+
 export function getEstimatedRoadRoute(input: RouteInput) {
   const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
   const distanceBetween = (
@@ -56,6 +59,9 @@ export async function getGoogleRoadRoute(apiKey: string, input: RouteInput) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(googleMapsHttpReferrer
+            ? { Referer: googleMapsHttpReferrer }
+            : {}),
           "X-Goog-Api-Key": apiKey,
           "X-Goog-FieldMask":
             "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline",

@@ -244,6 +244,22 @@ export async function getAdminLiveMap() {
   );
 }
 
+export async function getPublicRoute(input: {
+  fromLat: number;
+  fromLng: number;
+  toLat: number;
+  toLng: number;
+}) {
+  const query = new URLSearchParams(
+    Object.entries(input).map(([key, value]) => [key, String(value)]),
+  );
+  return apiFetch<{
+    durationSeconds: number;
+    distanceMeters: number;
+    coordinates: MapPoint[];
+  }>(`/public/routes?${query}`);
+}
+
 export async function getAdminFinance() {
   return apiFetch<AdminFinance>("/admin/finance");
 }

@@ -68,6 +68,11 @@ const baseTransportFeeAll = 300;
 const extraMeterFeeAll = 0.1;
 const ringSurchargeDefaultAll = 100;
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim() ?? "";
+const googleMapsHttpReferrer =
+  process.env.GOOGLE_MAPS_HTTP_REFERRER?.trim() ?? "";
+const googleMapsRequestHeaders = googleMapsHttpReferrer
+  ? { Referer: googleMapsHttpReferrer }
+  : undefined;
 
 app.use(helmet());
 app.use(
@@ -1210,7 +1215,10 @@ async function resolveAddressTextLocation(addressText?: string | null) {
       url.searchParams.set("region", "al");
       url.searchParams.set("key", googleMapsApiKey);
 
-      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const response = await fetch(url, {
+        headers: googleMapsRequestHeaders,
+        signal: AbortSignal.timeout(5000),
+      });
       const data = (await response.json()) as {
         results?: GoogleGeocodeResult[];
       };
@@ -1801,7 +1809,10 @@ app.get("/public/addresses/search", async (req, res, next) => {
       url.searchParams.set("region", "al");
       url.searchParams.set("key", googleMapsApiKey);
 
-      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const response = await fetch(url, {
+        headers: googleMapsRequestHeaders,
+        signal: AbortSignal.timeout(5000),
+      });
       const data = (await response.json()) as {
         results?: GoogleGeocodeResult[];
       };
@@ -1847,6 +1858,7 @@ app.get("/public/addresses/reverse", async (req, res, next) => {
         url.searchParams.set("key", googleMapsApiKey);
 
         const response = await fetch(url, {
+          headers: googleMapsRequestHeaders,
           signal: AbortSignal.timeout(5000),
         });
         const data = (await response.json()) as {

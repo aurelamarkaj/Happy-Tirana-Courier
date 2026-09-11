@@ -3,6 +3,9 @@ import {
   getGoogleRoadRoute,
 } from "./google-routes.js";
 
+const googleMapsHttpReferrer =
+  process.env.GOOGLE_MAPS_HTTP_REFERRER?.trim() ?? "";
+
 export interface Point {
   lat: number;
   lng: number;
@@ -114,6 +117,9 @@ export async function buildItinerary(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(googleMapsHttpReferrer
+            ? { Referer: googleMapsHttpReferrer }
+            : {}),
           "X-Goog-Api-Key": key,
           "X-Goog-FieldMask":
             "originIndex,destinationIndex,distanceMeters,status,condition",
