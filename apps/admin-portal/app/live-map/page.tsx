@@ -96,7 +96,7 @@ export default function LiveMapPage() {
           </div>
         </aside>
 
-        <section className="admin-panel min-h-[560px] overflow-hidden rounded-3xl border p-4 shadow-happy">
+        <section className="admin-panel min-h-[420px] overflow-hidden rounded-3xl border p-4 shadow-happy sm:min-h-[560px]">
           <AdminLiveMap orders={orders} riders={riders} />
         </section>
       </section>

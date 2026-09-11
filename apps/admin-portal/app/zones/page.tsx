@@ -213,7 +213,7 @@ export default function ZonesPage() {
           </div>
         </aside>
 
-        <section className="admin-panel min-h-[560px] overflow-hidden rounded-3xl border p-4 shadow-happy">
+        <section className="admin-panel min-h-[420px] overflow-hidden rounded-3xl border p-4 shadow-happy sm:min-h-[560px]">
           <ZoneBuilderMap
             onPointsChange={setPoints}
             points={points}

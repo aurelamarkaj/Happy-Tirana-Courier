@@ -1,13 +1,12 @@
 # Happy Tirana Courier
 
-Local-first monorepo for a courier platform in Tirana. It includes three Next.js App Router portals, an Express + Socket.io API, shared TypeScript contracts, and a PostgreSQL/PostGIS database schema.
+Local-first monorepo for a courier platform in Tirana. It includes three operational Next.js App Router portals, an Express + Socket.io API, shared TypeScript contracts, and a PostgreSQL/PostGIS database schema.
 
 ## Apps
 
 - `apps/admin-portal`: superadmin dashboard for businesses, riders, zones, live map, and finance.
-- `apps/business-portal`: fast order creation and live order tracking for businesses.
-- `apps/customer-portal`: public customer ordering experience for browsing businesses, adding products to cart, checkout, and live tracking.
-- `apps/rider-app`: mobile-first PWA for riders with online/offline, delivery workflow, and earnings.
+- `apps/business-portal`: order creation, product/category management, and live order tracking for businesses.
+- `apps/rider-app`: mobile-first PWA for riders with online/offline, order offers, delivery workflow, and earnings.
 - `apps/api`: local backend API and realtime gateway.
 
 ## Local Setup
@@ -30,25 +29,38 @@ Default ports:
 - API: `http://localhost:4000`
 - Admin portal: `http://localhost:3000`
 - Business portal: `http://localhost:3001`
-- Customer portal: `http://localhost:3003`
 - Rider app: `http://localhost:3002`
 
-Customer routes:
+## Docker demo deployment
 
-- `/`: catalog of businesses with categories and search.
-- `/businesses/[businessId]`: business storefront with product sections, item photos, quantity controls, and cart.
-- `/login`: customer login backed by the local API and PostgreSQL.
-- `/signup`: customer signup with name, phone, email, password, and address autocomplete.
-- `/profile`: editable customer profile and order history from PostgreSQL.
-- `/checkout`: delivery details, address autocomplete, cash checkout summary, auto-filled customer name/phone, and order creation from DB cart.
-- `/orders/track`: lighter live tracking layout with OpenStreetMap, rider GPS marker, and customer geolocation action.
+The production stack is defined in `docker-compose.prod.yml`. It builds all
+three portals and the API into one reusable image, keeps PostgreSQL and app
+ports bound to the server loopback interface, and expects a manually managed
+reverse proxy in front of it. Copy `.env.production.example` to `.env`, fill
+the secrets, then run:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+The stack includes its own nginx gateway. The only published application port
+is `http://127.0.0.1:13305`; point the external Plesk proxy at that target.
+The gateway redirects `/` to `/business` and routes `/admin`, `/business`,
+`/rider`, `/api`, and `/socket.io` to the internal containers. PostgreSQL and
+the individual app ports are not published on the host.
+
+Active portal routes:
+
+- Admin `http://localhost:3000/login`: create/manage businesses, riders, zones, live map, and finance.
+- Business `http://localhost:3001/login`: create delivery orders, manage products/categories, and monitor pending/in-delivery/completed orders.
+- Rider `http://localhost:3002/login`: go online/offline, receive nearby order offers, accept/reject, and manage delivery.
 
 ## Critical Business Rules
 
+- Public customer ordering is not enabled. Businesses create delivery orders on behalf of their clients.
 - Public self-registration is not enabled. Admin creates business and rider accounts.
 - Delivery zones are PostGIS polygons and transport fees are resolved with `ST_Contains`.
-- Customer checkout creates a normal courier order with product line items and cash-on-delivery payment.
-- Customer profile, cart, and order history are stored in local PostgreSQL; the browser keeps only the current customer id for the MVP session.
+- Business order creation stores the client name, client phone, delivery address, product value, transport fee, and offered riders in local PostgreSQL.
 - Rider GPS should be accepted only when the rider is online or has an active order.
 - Order acceptance uses a transaction with `FOR UPDATE` so the first rider to accept wins.
 - For each delivered order, the rider keeps 80% of transport and the platform receives 20%.

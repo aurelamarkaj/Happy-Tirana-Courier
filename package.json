@@ -5,15 +5,19 @@
   "description": "Local monorepo for Happy Tirana Courier: admin, business, rider, API, and PostGIS database schema.",
   "packageManager": "npm@11.6.2",
   "workspaces": [
-    "apps/*",
+    "apps/api",
+    "apps/admin-portal",
+    "apps/business-portal",
+    "apps/rider-app",
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev:api & npm run dev:admin & npm run dev:business & npm run dev:customer & npm run dev:rider & wait",
+    "predev": "npm run clean:next",
+    "dev": "npm run dev:api & npm run dev:admin & npm run dev:business & npm run dev:rider & wait",
+    "clean:next": "rm -rf apps/admin-portal/.next apps/business-portal/.next apps/rider-app/.next apps/admin-portal/.next.stale-* apps/business-portal/.next.stale-* apps/rider-app/.next.stale-*",
     "dev:api": "npm run dev -w @happy-tirana/api",
     "dev:admin": "npm run dev -w @happy-tirana/admin-portal",
     "dev:business": "npm run dev -w @happy-tirana/business-portal",
-    "dev:customer": "npm run dev -w @happy-tirana/customer-portal",
     "dev:rider": "npm run dev -w @happy-tirana/rider-app",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
