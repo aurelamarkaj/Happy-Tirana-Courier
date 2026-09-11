@@ -3,7 +3,7 @@
 import { ArrowRight, LockKeyhole, Mail, Store } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { loginBusiness } from "../../lib/api";
 
 export default function BusinessLoginPage() {
@@ -12,6 +12,17 @@ export default function BusinessLoginPage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (
+      new URLSearchParams(window.location.search).get("reason") ===
+      "session-expired"
+    ) {
+      setMessage(
+        "Hyrja e ruajtur nuk eshte me e vlefshme. Te lutem, hyr perseri.",
+      );
+    }
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -22,9 +33,7 @@ export default function BusinessLoginPage() {
       await loginBusiness({ email, password });
       router.replace("/");
     } catch {
-      setMessage(
-        "Login nuk u krye. Kontrollo email-in dhe password-in.",
-      );
+      setMessage("Hyrja nuk u krye. Kontrollo email-in dhe fjalëkalimin.");
     } finally {
       setSubmitting(false);
     }
@@ -49,7 +58,7 @@ export default function BusinessLoginPage() {
           <div className="grid h-12 w-12 place-items-center rounded-xl bg-happy-orange/15 text-happy-orange">
             <Store className="h-6 w-6" />
           </div>
-          <h1 className="type-screen-title mt-4">Login biznesi</h1>
+          <h1 className="type-screen-title mt-4">Hyrja e biznesit</h1>
           <p className="type-body mt-2 text-white/58">
             Hyr me kredencialet që janë krijuar nga superadmini.
           </p>
@@ -57,10 +66,10 @@ export default function BusinessLoginPage() {
           <div className="mt-6 grid gap-4">
             <label className="type-input block">
               Email
-              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <Mail className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none placeholder:text-white/35"
+                  className="w-full bg-transparent outline-none focus:outline-none placeholder:text-white/35"
                   onChange={(event) => setEmail(event.target.value)}
                   type="email"
                   required
@@ -69,11 +78,11 @@ export default function BusinessLoginPage() {
               </span>
             </label>
             <label className="type-input block">
-              Password
-              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+              Fjalëkalimi
+              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <LockKeyhole className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none placeholder:text-white/35"
+                  className="w-full bg-transparent outline-none focus:outline-none placeholder:text-white/35"
                   onChange={(event) => setPassword(event.target.value)}
                   required
                   type="password"
@@ -84,7 +93,10 @@ export default function BusinessLoginPage() {
           </div>
 
           {message ? (
-            <p className="type-warning mt-4 rounded-xl border border-happy-orange/30 bg-happy-orange/10 p-3 text-happy-orange">
+            <p
+              role="alert"
+              className="type-warning mt-4 rounded-xl border border-happy-orange/30 bg-happy-orange/10 p-3 text-happy-orange"
+            >
               {message}
             </p>
           ) : null}

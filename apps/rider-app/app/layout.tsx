@@ -6,23 +6,27 @@ import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/700.css";
 import "@fontsource/manrope/800.css";
 import "./globals.css";
+import "../../shared/operations.css";
+import "../../shared/forms.css";
 
 export const metadata: Metadata = {
   title: "Happy Tirana Courier Rider",
   description: "Mobile-first rider PWA for Happy Tirana Courier",
-  manifest: "/manifest.json"
+  manifest: "/manifest.json",
 };
 
 export const viewport: Viewport = {
   themeColor: "#FF5500",
   width: "device-width",
-  initialScale: 1
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="sq">
-      <body className="font-sans">{children}</body>
+      <body className="font-sans" suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }

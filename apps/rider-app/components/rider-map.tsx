@@ -1,155 +1,300 @@
 "use client";
 
-import { MapPin, Navigation2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getRoute, sendRiderLocation, type RiderOrder, type RoutePoint } from "../lib/api";
+import { useEffect, useRef, useState } from "react";
+import {
+  getRiderItinerary,
+  sendRiderLocation,
+  type RiderOrder,
+  type RiderItinerary,
+  type RoutePoint,
+} from "../lib/api";
+import { createHappyMarker, loadGoogleMaps } from "../lib/google-maps";
 
-declare global {
-  interface Window {
-    L?: any;
-    happyLeafletReady?: Promise<any>;
-  }
-}
-
-function loadLeaflet() {
-  if (typeof window === "undefined") return Promise.reject(new Error("NO_WINDOW"));
-  if (window.L) return Promise.resolve(window.L);
-  if (window.happyLeafletReady) return window.happyLeafletReady;
-
-  const css = document.createElement("link");
-  css.rel = "stylesheet";
-  css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-  document.head.appendChild(css);
-
-  window.happyLeafletReady = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.async = true;
-    script.onload = () => resolve(window.L);
-    script.onerror = () => reject(new Error("LEAFLET_LOAD_FAILED"));
-    document.body.appendChild(script);
-  });
-
-  return window.happyLeafletReady;
-}
-
-export function RiderMap({ order, isOnline, leg }: { order: RiderOrder | null; isOnline: boolean; leg: "pickup" | "dropoff" }) {
-  const mapElementRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<any>(null);
-  const routeRef = useRef<any>(null);
-  const riderMarkerRef = useRef<any>(null);
-  const pickupMarkerRef = useRef<any>(null);
-  const dropoffMarkerRef = useRef<any>(null);
-  const [currentLocation, setCurrentLocation] = useState<RoutePoint | null>(null);
-  const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
-  const [message, setMessage] = useState("Aktivizo online per GPS live.");
-
-  const destination = useMemo(() => {
-    if (!order) return null;
-    return leg === "pickup" ? { lat: order.pickupLat, lng: order.pickupLng } : { lat: order.dropoffLat, lng: order.dropoffLng };
-  }, [leg, order]);
-
-  useEffect(() => {
-    if (!isOnline || !navigator.geolocation) return;
-
-    const watcherId = navigator.geolocation.watchPosition(
-      (position) => {
-        const next = { lat: position.coords.latitude, lng: position.coords.longitude };
-        setCurrentLocation(next);
-        setMessage("GPS live aktiv.");
-        sendRiderLocation({
-          ...next,
-          orderId: order?.id ?? null,
-          speed: position.coords.speed ?? undefined,
-          heading: position.coords.heading ?? undefined
-        }).catch(() => setMessage("GPS u lexua, por nuk u ruajt dot ne API."));
-      },
-      () => setMessage("Lejo GPS ne browser per gjurmim live."),
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 }
-    );
-
-    return () => navigator.geolocation.clearWatch(watcherId);
-  }, [isOnline, order?.id]);
-
-  useEffect(() => {
-    if (!destination || !currentLocation) {
-      setRoutePoints([]);
-      return;
-    }
-
-    getRoute({ fromLat: currentLocation.lat, fromLng: currentLocation.lng, toLat: destination.lat, toLng: destination.lng })
-      .then((route) => setRoutePoints(route.coordinates.length > 1 ? route.coordinates : [currentLocation, destination]))
-      .catch(() => setRoutePoints([currentLocation, destination]));
-  }, [currentLocation, destination]);
+const defaultCenter = { lat: 41.3275, lng: 19.8187 };
+export function RiderMap({
+  order,
+  orders,
+  isOnline,
+  leg,
+  onSelectOrder,
+}: {
+  order: RiderOrder | null;
+  orders: RiderOrder[];
+  isOnline: boolean;
+  leg: "pickup" | "dropoff";
+  onSelectOrder: (id: string) => void;
+}) {
+  const element = useRef<HTMLDivElement>(null);
+  const map = useRef<any>(null);
+  const overlays = useRef<any[]>([]);
+  const lastRoute = useRef<{ point: RoutePoint; time: number } | null>(null);
+  const [ready, setReady] = useState(false);
+  const [mapError, setMapError] = useState(false);
+  const [location, setLocation] = useState<RoutePoint | null>(null);
+  const [origin, setOrigin] = useState<RoutePoint | null>(null);
+  const [itinerary, setItinerary] = useState<RiderItinerary | null>(null);
+  const [routeError, setRouteError] = useState("");
+  const [gpsMessage, setGpsMessage] = useState(
+    "Lejo vendndodhjen për navigim nga pozicioni yt.",
+  );
+  const [routing, setRouting] = useState(false);
+  const canTrack = isOnline || orders.length > 0;
+  const signature = orders
+    .map((o) => o.id + ":" + o.status)
+    .sort()
+    .join("|");
+  const activeId = orders[0]?.id ?? null;
 
   useEffect(() => {
     let cancelled = false;
-
-    loadLeaflet().then((L) => {
-      if (cancelled || !mapElementRef.current) return;
-      const center = currentLocation ?? destination ?? { lat: 41.3275, lng: 19.8187 };
-
-      if (!mapRef.current) {
-        mapRef.current = L.map(mapElementRef.current, { zoomControl: false, attributionControl: false }).setView([center.lat, center.lng], 14);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          maxZoom: 19,
-          attribution: "OpenStreetMap"
-        }).addTo(mapRef.current);
-        L.control.zoom({ position: "bottomright" }).addTo(mapRef.current);
-      }
-
-      const pickupIcon = L.divIcon({ className: "rider-map-pin rider-map-pickup", html: "<span></span>", iconSize: [26, 26] });
-      const dropoffIcon = L.divIcon({ className: "rider-map-pin rider-map-dropoff", html: "<span></span>", iconSize: [26, 26] });
-      const riderIcon = L.divIcon({ className: "rider-map-rider", html: "<span>HTC</span>", iconSize: [48, 48] });
-
-      if (order) {
-        if (!pickupMarkerRef.current) pickupMarkerRef.current = L.marker([order.pickupLat, order.pickupLng], { icon: pickupIcon }).addTo(mapRef.current);
-        else pickupMarkerRef.current.setLatLng([order.pickupLat, order.pickupLng]);
-
-        if (!dropoffMarkerRef.current) dropoffMarkerRef.current = L.marker([order.dropoffLat, order.dropoffLng], { icon: dropoffIcon }).addTo(mapRef.current);
-        else dropoffMarkerRef.current.setLatLng([order.dropoffLat, order.dropoffLng]);
-      }
-
-      if (currentLocation) {
-        if (!riderMarkerRef.current) riderMarkerRef.current = L.marker([currentLocation.lat, currentLocation.lng], { icon: riderIcon }).addTo(mapRef.current);
-        riderMarkerRef.current.setLatLng([currentLocation.lat, currentLocation.lng]);
-      }
-
-      const latLngs = routePoints.map((point) => [point.lat, point.lng]);
-      if (latLngs.length > 1) {
-        if (!routeRef.current) routeRef.current = L.polyline(latLngs, { color: "#FF5500", weight: 6, opacity: 0.95, lineCap: "round" }).addTo(mapRef.current);
-        else routeRef.current.setLatLngs(latLngs);
-        mapRef.current.fitBounds(routeRef.current.getBounds(), { padding: [32, 32] });
-      } else {
-        mapRef.current.setView([center.lat, center.lng], 14);
-      }
-    });
-
+    loadGoogleMaps()
+      .then(() => {
+        if (cancelled || !element.current) return;
+        if (!map.current)
+          map.current = new window.google.maps.Map(element.current, {
+            center: defaultCenter,
+            zoom: 14,
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: true,
+          });
+        setReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setMapError(true);
+      });
     return () => {
       cancelled = true;
     };
-  }, [currentLocation, destination, order, routePoints]);
+  }, []);
+
+  useEffect(() => {
+    if (!canTrack) {
+      setLocation(null);
+      setOrigin(null);
+      lastRoute.current = null;
+      setGpsMessage("Aktivizo online për vendndodhjen live.");
+      return;
+    }
+    if (!navigator.geolocation) {
+      setGpsMessage("Ky shfletues nuk ofron vendndodhjen.");
+      return;
+    }
+    let lastSent = 0;
+    const watch = navigator.geolocation.watchPosition(
+      (pos) => {
+        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setLocation(p);
+        setGpsMessage("GPS live aktiv.");
+        const now = Date.now();
+        if (now - lastSent > 10000) {
+          lastSent = now;
+          void sendRiderLocation({
+            ...p,
+            orderId: activeId,
+            speed: pos.coords.speed ?? undefined,
+            heading: pos.coords.heading ?? undefined,
+          }).catch(() =>
+            setGpsMessage("Vendndodhja u gjet, por nuk u dërgua. Kontrollo lidhjen me internetin."),
+          );
+        }
+        const previous = lastRoute.current;
+        if (
+          !previous ||
+          (now - previous.time > 30000 &&
+            Math.hypot(p.lat - previous.point.lat, p.lng - previous.point.lng) >
+              0.0005)
+        ) {
+          lastRoute.current = { point: p, time: now };
+          setOrigin(p);
+        }
+      },
+      () =>
+        setGpsMessage(
+          "Lejo vendndodhjen në shfletues për itinerarin nga pozicioni yt.",
+        ),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+    return () => navigator.geolocation.clearWatch(watch);
+  }, [canTrack, activeId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setItinerary(null);
+    setRouteError("");
+    if (!origin || !signature) {
+      setRouting(false);
+      return;
+    }
+    setRouting(true);
+    getRiderItinerary(origin)
+      .then((result) => {
+        if (cancelled) return;
+        setItinerary(result);
+        if (result.stops[0]) onSelectOrder(result.stops[0].orderId);
+      })
+      .catch(() => {
+        if (!cancelled)
+          setRouteError(
+            "Itinerari nuk u llogarit. Provo përsëri; navigimi për porosinë mbetet i disponueshëm.",
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setRouting(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [origin, signature, onSelectOrder]);
+
+  useEffect(() => {
+    if (!ready) return;
+    overlays.current.forEach((item) => item.setMap(null));
+    overlays.current = [];
+    const points: RoutePoint[] = [];
+    const marker = (point: RoutePoint, label: string, color: string) => {
+      points.push(point);
+      overlays.current.push(
+        createHappyMarker(map.current, point, label, color),
+      );
+    };
+    if (location) marker(location, "Ti", "#2463eb");
+    if (itinerary) {
+      itinerary.stops.forEach((stop, i) =>
+        marker(
+          stop,
+          String(i + 1),
+          stop.kind === "pickup" ? "#343434" : "#ff5500",
+        ),
+      );
+      if (itinerary.coordinates.length > 1)
+        overlays.current.push(
+          new window.google.maps.Polyline({
+            map: map.current,
+            path: itinerary.coordinates,
+            strokeColor: "#ff5500",
+            strokeWeight: 5,
+          }),
+        );
+    } else {
+      for (const item of orders) {
+        if (item.status === "ACCEPTED")
+          marker({ lat: item.pickupLat, lng: item.pickupLng }, "B", "#343434");
+        marker({ lat: item.dropoffLat, lng: item.dropoffLng }, "K", "#ff5500");
+      }
+    }
+    if (points.length > 1) {
+      const bounds = new window.google.maps.LatLngBounds();
+      [...points, ...(itinerary?.coordinates ?? [])].forEach((p) =>
+        bounds.extend(p),
+      );
+      map.current.fitBounds(bounds, 48);
+    } else if (points[0]) {
+      map.current.setCenter(points[0]);
+      map.current.setZoom(15);
+    }
+    return () => {
+      overlays.current.forEach((item) => item.setMap(null));
+      overlays.current = [];
+    };
+  }, [ready, location, itinerary, signature]);
+
+  const next = itinerary?.stops[0];
+  const destination =
+    next ??
+    (order && order.status !== "OFFERED"
+      ? leg === "pickup"
+        ? { lat: order.pickupLat, lng: order.pickupLng }
+        : { lat: order.dropoffLat, lng: order.dropoffLng }
+      : null);
+  const navigation = destination
+    ? "https://www.google.com/maps/dir/?" +
+      new URLSearchParams({
+        api: "1",
+        destination: `${destination.lat},${destination.lng}`,
+        travelmode: "driving",
+        dir_action: "navigate",
+        ...(location ? { origin: `${location.lat},${location.lng}` } : {}),
+      }).toString()
+    : null;
 
   return (
-    <section className="rider-panel relative min-h-[360px] overflow-hidden rounded-3xl border shadow-happy md:min-h-[520px]">
-      <div className="absolute inset-0" ref={mapElementRef} />
-      <div className="absolute left-4 right-4 top-4 flex items-center justify-between gap-3">
-        <div className="rounded-2xl bg-white/95 px-4 py-3 text-happy-black shadow-happy backdrop-blur">
-          <p className="type-badge uppercase text-black/45">{leg === "pickup" ? "Drejt biznesit" : "Drejt klientit"}</p>
-          <strong className="type-product mt-1 block">{order ? (leg === "pickup" ? order.businessName : order.dropoffAddress) : "Pa porosi aktive"}</strong>
-        </div>
-        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-happy-orange text-white shadow-happy">
-          <Navigation2 className="h-5 w-5" />
-        </div>
+    <section className="rider-panel overflow-hidden rounded-xl border">
+      <div className="relative h-[380px] md:h-[520px]">
+        <div className="absolute inset-0" ref={element} />
+        {mapError && (
+          <p
+            role="alert"
+            className="absolute inset-x-4 top-4 rounded-lg bg-black/90 p-4"
+          >
+            Harta nuk u ngarkua. Kontrollo lidhjen ose konfigurimin e Google
+            Maps. Mund të përdorësh butonin e navigimit më poshtë.
+          </p>
+        )}
       </div>
-      <div className="absolute bottom-4 left-4 right-4 rounded-2xl bg-[#101010]/88 p-4 text-white shadow-happy backdrop-blur">
-        <p className="type-badge flex items-center uppercase text-white/55">
-          <MapPin className="mr-2 h-4 w-4 text-happy-orange" />
-          {message}
-        </p>
-        <p className="type-body mt-1 text-white/82">
-          {currentLocation ? `${currentLocation.lat.toFixed(5)}, ${currentLocation.lng.toFixed(5)}` : "Pozicioni do ruhet vetem kur je online."}
-        </p>
+      <div className="space-y-3 p-4">
+        <p className="type-secondary text-white/60">{gpsMessage}</p>
+        {routing && (
+          <p role="status">Po renditen ndalesat sipas distancës rrugore…</p>
+        )}
+        {routeError && (
+          <div role="alert">
+            <p>{routeError}</p>
+            <button
+              className="ops-link"
+              onClick={() => location && setOrigin({ ...location })}
+            >
+              Riprovo itinerarin
+            </button>
+          </div>
+        )}
+        {itinerary && (
+          <p className="type-product">
+            {itinerary.stops.length} ndalesa ·{" "}
+            {(itinerary.distanceMeters / 1000).toFixed(2)} km · rreth{" "}
+            {Math.ceil(itinerary.durationSeconds / 60)} min
+          </p>
+        )}
+        {navigation && (
+          <a
+            className="type-cta block rounded-lg bg-happy-orange p-3 text-center text-white"
+            href={navigation}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Nis navigimin
+            {next
+              ? ` · ${next.kind === "pickup" ? "Marrje" : "Dorëzim"} ${next.code}`
+              : ""}
+          </a>
+        )}
+        {!orders.length && (
+          <p>
+            Nuk ka porosi aktive. Aktivizo Online dhe lejo vendndodhjen që të
+            marrësh ofertat e reja. Itinerari shfaqet pasi të pranosh porosinë.
+          </p>
+        )}
+        {itinerary && (
+          <ol className="space-y-2" aria-label="Ndalesat sipas radhës">
+            {itinerary.stops.map((stop, i) => (
+              <li key={stop.orderId + stop.kind}>
+                <button
+                  type="button"
+                  onClick={() => onSelectOrder(stop.orderId)}
+                  className="w-full rounded-lg border border-white/10 p-3 text-left"
+                >
+                  <strong>
+                    {i + 1}. {stop.kind === "pickup" ? "Marrje" : "Dorëzim"} ·{" "}
+                    {stop.code}
+                  </strong>
+                  <span className="block text-white/60">
+                    {stop.title} · {stop.address}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
     </section>
   );

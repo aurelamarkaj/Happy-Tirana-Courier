@@ -29,12 +29,18 @@ services:
         NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_URL}/api
         NEXT_PUBLIC_SOCKET_URL: ${PUBLIC_URL}
         NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
+        NEXT_PUBLIC_GOOGLE_MAPS_ENABLED: ${NEXT_PUBLIC_GOOGLE_MAPS_ENABLED:-true}
     command: ["./node_modules/.bin/tsx", "apps/api/src/server.ts"]
     environment:
-      DATABASE_URL: postgresql://happy:${POSTGRES_PASSWORD}@postgres:5432/happy_tirana
+      DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
       CORS_ORIGINS: ${PUBLIC_URL}
-      PORT: "4000"
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+      RIDER_DEBIT_LIMIT_ALL: ${RIDER_DEBIT_LIMIT_ALL:-10000}
+      NEARBY_RIDER_RADIUS_METERS: ${NEARBY_RIDER_RADIUS_METERS:-1000}
+      OFFER_ESCALATION_SECONDS: ${OFFER_ESCALATION_SECONDS:-60}
+      ADMIN_UNASSIGNED_ALERT_MINUTES: ${ADMIN_UNASSIGNED_ALERT_MINUTES:-5}
+      PORT: ${PORT:-4000}
     depends_on:
       postgres:
         condition: service_healthy

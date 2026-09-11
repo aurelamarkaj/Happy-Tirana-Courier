@@ -22,7 +22,7 @@ export default function LiveMapPage() {
       setOrders(data.orders);
       setMessage("");
     } catch {
-      setMessage("Nuk u lexua harta live nga API/Postgres.");
+      setMessage("Harta nuk u ngarkua. Kontrollo lidhjen me internetin dhe provo përsëri.");
     }
   }
 
@@ -48,7 +48,7 @@ export default function LiveMapPage() {
 
   return (
     <AdminShell
-      description="Pamje live per motoristet online, porosite aktive dhe eventet nga Socket.io/API."
+      description="Ndiq motoristët online, porositë aktive dhe përditësimet e dorëzimeve në kohë reale."
       eyebrow="Realtime"
       title="Harta live"
     >
@@ -81,7 +81,7 @@ export default function LiveMapPage() {
                 <div className="admin-soft rounded-2xl border p-4" key={item}>
                   <p className="type-body">{item}</p>
                   <p className="type-secondary mt-1 text-white/45">
-                    nga databaza lokale
+                    Përditësim i porosisë
                   </p>
                 </div>
               ))

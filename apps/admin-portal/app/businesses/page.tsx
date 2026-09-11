@@ -8,6 +8,7 @@ import {
   Phone,
   Plus,
   Save,
+  Search,
   Store,
   Tags,
   X,
@@ -64,6 +65,16 @@ export default function BusinessesPage() {
   const [saving, setSaving] = useState(false);
   const [savingCategory, setSavingCategory] = useState(false);
   const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const filteredBusinesses = businesses.filter(
+    (business) =>
+      (statusFilter === "ALL" || business.status === statusFilter) &&
+      [business.name, business.phone, business.email, business.addressText]
+        .join(" ")
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
 
   async function loadBusinesses() {
     setLoading(true);
@@ -87,13 +98,16 @@ export default function BusinessesPage() {
       }
       setMessage("");
     } catch {
-      setMessage("Nuk u lexuan bizneset/kategorite nga databaza lokale.");
+      setMessage("Nuk u lexuan bizneset/kategorite Përditësim i porosisë.");
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
+    setShowForm(
+      new URLSearchParams(window.location.search).get("create") === "1",
+    );
     void loadBusinesses();
   }, []);
 
@@ -131,10 +145,10 @@ export default function BusinessesPage() {
       setForm(emptyForm);
       setShowForm(false);
       await loadBusinesses();
-      setMessage("Biznesi u krijua dhe u ruajt ne databazen lokale.");
+      setMessage("Biznesi u krijua me sukses.");
     } catch {
       setMessage(
-        "Krijimi i biznesit deshtoi. Kontrollo telefonin/email-in ose Postgres.",
+        "Biznesi nuk u krijua. Kontrollo të dhënat dhe provo përsëri.",
       );
     } finally {
       setSaving(false);
@@ -155,10 +169,10 @@ export default function BusinessesPage() {
       setCategoryForm({ name: "" });
       setForm((current) => ({ ...current, category: data.category.name }));
       await loadBusinesses();
-      setMessage("Kategoria u krijua dhe u shtua ne dropdown.");
+      setMessage("Kategoria u krijua dhe është gati për t’u përdorur.");
     } catch {
       setMessage(
-        "Kategoria nuk u ruajt. Kontrollo nese ekziston ose Postgres eshte aktiv.",
+        "Kategoria nuk u ruajt. Kontrollo nëse ky emër ekziston dhe provo përsëri.",
       );
     } finally {
       setSavingCategory(false);
@@ -169,7 +183,7 @@ export default function BusinessesPage() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      setMessage("Zgjidh nje file fotoje.");
+      setMessage("Zgjidh një skedar fotografie.");
       return;
     }
     if (file.size > 2_000_000) {
@@ -202,7 +216,7 @@ export default function BusinessesPage() {
             ) : (
               <Plus className="mr-2 h-5 w-5" />
             )}
-            {showForm ? "Mbyll biznesin" : "Krijo biznes"}
+            {showForm ? "Mbyll formen" : "Krijo biznes"}
           </button>
           <button
             className="type-cta flex h-11 w-full items-center justify-center rounded-xl bg-white/10 px-4 text-white hover:bg-white/15 sm:w-auto"
@@ -222,21 +236,26 @@ export default function BusinessesPage() {
       eyebrow="Menaxhim"
       title="Biznese"
     >
-      <section className="grid gap-3 md:grid-cols-3">
+      <section className="entity-metrics grid gap-3 md:grid-cols-3">
         <AdminMetric
           icon={Building2}
           label="Biznese aktive"
           value={String(metrics.active)}
+          loading={loading}
         />
         <AdminMetric
           icon={CheckCircle2}
           label="Pranojne porosi"
           value={String(metrics.accepting)}
+          tone="green"
+          loading={loading}
         />
         <AdminMetric
           icon={Store}
           label="Kategori"
           value={String(metrics.categories)}
+          tone="blue"
+          loading={loading}
         />
       </section>
 
@@ -258,10 +277,10 @@ export default function BusinessesPage() {
               </span>
             </div>
 
-            <div className="mt-4 grid gap-3">
+            <div className="admin-form-grid mt-4">
               <Field label="Emri i biznesit">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, name: event.target.value })
                   }
@@ -272,7 +291,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Emri ligjor">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, legalName: event.target.value })
                   }
@@ -282,41 +301,44 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Telefoni i biznesit">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, phone: event.target.value })
                   }
                   placeholder="+35569..."
+                  type="tel"
                   required
                   value={form.phone}
                 />
               </Field>
               <Field label="Email per login">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, email: event.target.value })
                   }
-                  placeholder="biznes@example.local"
+                  placeholder="biznes@example.com"
                   type="email"
                   value={form.email}
                 />
               </Field>
               <Field label="Password per biznesin">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, password: event.target.value })
                   }
                   placeholder="Minimumi 6 karaktere"
                   required
                   type="password"
+                  minLength={6}
+                  autoComplete="new-password"
                   value={form.password}
                 />
               </Field>
               <Field label="Kategoria e biznesit">
                 <select
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, category: event.target.value })
                   }
@@ -338,7 +360,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Statusi i biznesit">
                 <select
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, status: event.target.value })
                   }
@@ -358,7 +380,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Adresa e biznesit">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, addressText: event.target.value })
                   }
@@ -369,7 +391,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Latitude">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, lat: event.target.value })
                   }
@@ -379,7 +401,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Longitude">
                 <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, lng: event.target.value })
                   }
@@ -389,7 +411,7 @@ export default function BusinessesPage() {
               </Field>
               <Field label="Pershkrim i shkurter">
                 <textarea
-                  className="admin-input min-h-20 w-full rounded-xl border px-3 py-3 outline-none focus:border-happy-orange"
+                  className="admin-input min-h-20 w-full rounded-xl border px-3 py-3 outline-none focus:border-white/35"
                   onChange={(event) =>
                     setForm({ ...form, description: event.target.value })
                   }
@@ -404,8 +426,7 @@ export default function BusinessesPage() {
                 <span>
                   <span className="type-product block">Foto cover</span>
                   <span className="type-secondary mt-1 block text-white/50">
-                    Upload nga kompjuteri, deri ne 2MB. Ruhet lokalisht ne
-                    databaze.
+                    Foto deri ne 2MB.
                   </span>
                 </span>
                 <input
@@ -451,7 +472,7 @@ export default function BusinessesPage() {
           <form className="mt-5 grid gap-3" onSubmit={submitCategory}>
             <Field label="Emri i kategorise">
               <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
                   setCategoryForm({
                     ...categoryForm,
@@ -504,8 +525,69 @@ export default function BusinessesPage() {
             {loading ? "Duke lexuar..." : `${businesses.length} subjekte`}
           </span>
         </div>
-        <div className="mt-4 grid gap-3">
-          {businesses.map((business) => (
+        <div className="list-toolbar">
+          <label className="search-field">
+            <Search size={16} />
+            <input
+              aria-label="Kerko biznes"
+              placeholder="Emri, telefoni ose adresa..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            {query && (
+              <button
+                aria-label="Pastro kerkimin"
+                title="Pastro kerkimin"
+                onClick={() => setQuery("")}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </label>
+          <select
+            aria-label="Filtro bizneset sipas statusit"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            <option value="ALL">Te gjitha statuset</option>
+            {statusOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mt-4 grid gap-3" aria-busy={loading}>
+          {!loading && !filteredBusinesses.length && !message && (
+            <div className="empty-state">
+              <Building2 size={30} />
+              <h3>
+                {businesses.length
+                  ? "Asnje biznes nuk perputhet"
+                  : "Nuk ka biznese te regjistruara"}
+              </h3>
+              {businesses.length ? (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setQuery("");
+                    setStatusFilter("ALL");
+                  }}
+                >
+                  Pastro filtrat
+                </button>
+              ) : (
+                <button
+                  className="secondary-button"
+                  onClick={() => setShowForm(true)}
+                >
+                  <Plus size={16} />
+                  Krijo biznes
+                </button>
+              )}
+            </div>
+          )}
+          {filteredBusinesses.map((business) => (
             <article
               className="admin-soft grid gap-4 rounded-2xl border p-4 md:grid-cols-[64px_1fr_auto]"
               key={business.id}
@@ -535,7 +617,8 @@ export default function BusinessesPage() {
                   {business.productCount} produkte
                 </span>
                 <span className="type-badge h-fit rounded-full bg-happy-orange/15 px-3 py-2 text-happy-orange">
-                  {business.status}
+                  {statusOptions.find((item) => item.value === business.status)
+                    ?.label ?? business.status}
                 </span>
               </div>
             </article>

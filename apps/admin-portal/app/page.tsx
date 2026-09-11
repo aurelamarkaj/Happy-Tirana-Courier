@@ -2,16 +2,21 @@
 
 import {
   AlertTriangle,
+  ArrowRight,
   Bike,
   Building2,
-  Map,
+  CheckCircle2,
+  MapPinned,
+  Package,
+  Plus,
   ReceiptText,
-  Route,
-  ShieldCheck,
-  TrendingUp,
+  RefreshCw,
+  Search,
+  Wallet,
+  X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminMetric, AdminShell } from "../components/admin-shell";
 import {
   formatLek,
@@ -25,198 +30,499 @@ import {
   type AdminRider,
 } from "../lib/api";
 
-const modules = [
-  {
-    href: "/businesses",
-    label: "Biznese",
-    description: "Krijo llogari, aktivizo dhe edito subjektet.",
-    icon: Building2,
-  },
-  {
-    href: "/riders",
-    label: "Motoriste",
-    description: "Menaxho kurieret, dokumentet dhe statusin.",
-    icon: Bike,
-  },
-  {
-    href: "/zones",
-    label: "Zona",
-    description: "Vizato poligone dhe cakto cmime fikse.",
-    icon: Map,
-  },
-  {
-    href: "/live-map",
-    label: "Live Map",
-    description: "Shiko porosite dhe GPS ne kohe reale.",
-    icon: Route,
-  },
-  {
-    href: "/finance",
-    label: "Financa",
-    description: "Raporte 80/20 dhe shlyerje periodike.",
-    icon: ReceiptText,
-  },
-];
+const statusLabels: Record<string, string> = {
+  CREATED: "E re",
+  OFFERED: "Ne pritje",
+  ACCEPTED: "E pranuar",
+  PICKED_UP: "Ne transport",
+  DELIVERED: "E dorezuar",
+  CANCELLED: "E anuluar",
+};
 
 export default function AdminHome() {
-  const [businesses, setBusinesses] = useState<AdminBusiness[]>([]);
-  const [riders, setRiders] = useState<AdminRider[]>([]);
-  const [orders, setOrders] = useState<AdminLiveOrder[]>([]);
+  const [businesses, setBusinesses] = useState<AdminBusiness[] | null>(null);
+  const [riders, setRiders] = useState<AdminRider[] | null>(null);
+  const [orders, setOrders] = useState<AdminLiveOrder[] | null>(null);
   const [finance, setFinance] = useState<AdminFinance | null>(null);
-  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [refresh, setRefresh] = useState(0);
+  const [updatedAt, setUpdatedAt] = useState("");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
 
   useEffect(() => {
-    Promise.all([
-      getAdminBusinesses(),
-      getAdminRiders(),
-      getAdminLiveMap(),
-      getAdminFinance(),
-    ])
-      .then(([businessData, riderData, liveData, financeData]) => {
-        setBusinesses(businessData.businesses);
-        setRiders(riderData.riders);
-        setOrders(liveData.orders);
-        setFinance(financeData);
-        setMessage("");
-      })
-      .catch(() =>
-        setMessage("Dashboard-i nuk u lexua dot nga databaza lokale."),
+    let mounted = true;
+    setLoading(true);
+    async function load() {
+      const results = await Promise.allSettled([
+        getAdminBusinesses(),
+        getAdminRiders(),
+        getAdminLiveMap(),
+        getAdminFinance(),
+      ]);
+      if (!mounted) return;
+      const [businessResult, riderResult, liveResult, financeResult] = results;
+      setBusinesses(
+        businessResult.status === "fulfilled"
+          ? businessResult.value.businesses
+          : null,
       );
-  }, []);
-
-  const metrics = useMemo(
-    () => [
-      { label: "Porosi aktive", value: String(orders.length), icon: Route },
-      {
-        label: "Motoriste online",
-        value: String(riders.filter((rider) => rider.isOnline).length),
-        icon: Bike,
-      },
-      {
-        label: "Biznese aktive",
-        value: String(
-          businesses.filter((business) => business.status === "ACTIVE").length,
+      setRiders(
+        riderResult.status === "fulfilled" ? riderResult.value.riders : null,
+      );
+      setOrders(
+        liveResult.status === "fulfilled" ? liveResult.value.orders : null,
+      );
+      setFinance(
+        financeResult.status === "fulfilled" ? financeResult.value : null,
+      );
+      setErrors(
+        results.flatMap((result, index) =>
+          result.status === "rejected"
+            ? [["bizneset", "motoristet", "porosite", "financat"][index]]
+            : [],
         ),
-        icon: TrendingUp,
-      },
-      {
-        label: "Platforma 20%",
-        value: formatLek(finance?.metrics.platformCommission ?? 0),
-        icon: ReceiptText,
-      },
-    ],
-    [businesses, finance?.metrics.platformCommission, orders.length, riders],
-  );
+      );
+      setUpdatedAt(
+        results.every((result) => result.status === "fulfilled")
+          ? new Date().toLocaleTimeString("sq-AL", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "",
+      );
+      setLoading(false);
+    }
+    void load();
+    return () => {
+      mounted = false;
+    };
+  }, [refresh]);
+
+  const waiting =
+    orders?.filter((order) => ["CREATED", "OFFERED"].includes(order.status)) ??
+    [];
+  const blocked = riders?.filter((rider) => rider.isDebitBlocked) ?? [];
+  const filteredOrders =
+    orders?.filter((order) => {
+      const matchesStatus =
+        filter === "all" ||
+        (filter === "waiting"
+          ? ["CREATED", "OFFERED"].includes(order.status)
+          : ["ACCEPTED", "PICKED_UP"].includes(order.status));
+      return (
+        matchesStatus &&
+        `${order.code} ${order.businessName} ${order.dropoffAddress}`
+          .toLowerCase()
+          .includes(query.toLowerCase().trim())
+      );
+    }) ?? [];
+  const online = riders?.filter((rider) => rider.isOnline).length ?? 0;
 
   return (
     <AdminShell
+      eyebrow="OPERACIONET"
+      title="Pasqyra e platformes"
+      description=""
       action={
-        <Link
-          className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange px-5 text-white happy-pill-shadow"
-          href="/live-map"
-        >
-          Harta live
-        </Link>
+        <>
+          <button
+            className="icon-button refresh-button"
+            title="Rifresko te dhenat"
+            aria-label="Rifresko te dhenat"
+            disabled={loading}
+            onClick={() => setRefresh((value) => value + 1)}
+          >
+            <RefreshCw size={17} className={loading ? "spin" : ""} />
+          </button>
+          <Link className="primary-button" href="/live-map">
+            <MapPinned size={17} />
+            Harta live
+            <ArrowRight size={16} />
+          </Link>
+        </>
       }
-      description="Paneli qendror per krijimin e bizneseve dhe motoristeve, zonat PostGIS, monitorimin live dhe financat e platformes."
-      eyebrow="Superadmin"
-      title="Menaxhimi i platformes"
     >
-      {message ? (
-        <p className="type-warning rounded-2xl border border-happy-orange/40 bg-happy-orange/10 p-4 text-happy-orange">
-          {message}
-        </p>
-      ) : null}
+      <div className="dashboard-meta" role="status">
+        <span
+          className={`status-dot ${errors.length ? "is-warning" : loading ? "is-loading" : ""}`}
+        />
+        {loading
+          ? "Duke ngarkuar te dhenat..."
+          : errors.length
+            ? "Disa te dhena mungojne"
+            : `Perditesuar ne ${updatedAt}`}
+      </div>
+      {errors.length > 0 && (
+        <div className="notice" role="alert">
+          <AlertTriangle size={19} />
+          <span>Nuk u ngarkuan: {errors.join(", ")}. Provo perseri.</span>
+          <button
+            className="text-button"
+            disabled={loading}
+            onClick={() => setRefresh((value) => value + 1)}
+          >
+            Riprovo
+          </button>
+        </div>
+      )}
 
-      <section className="grid gap-3 md:grid-cols-4">
-        {metrics.map((metric) => (
-          <AdminMetric
-            icon={metric.icon}
-            key={metric.label}
-            label={metric.label}
-            value={metric.value}
-          />
-        ))}
+      <section
+        className="dashboard-metrics"
+        aria-label="Statistikat e platformes"
+      >
+        <AdminMetric
+          icon={Package}
+          label="Porosi aktive"
+          value={orders ? String(orders.length) : "--"}
+          detail={
+            orders
+              ? `${waiting.length} ne pritje te motoristit`
+              : "Te dhenat mungojne"
+          }
+          tone="blue"
+          loading={loading}
+        />
+        <AdminMetric
+          icon={Bike}
+          label="Motoriste online"
+          value={riders ? String(online) : "--"}
+          detail={
+            riders
+              ? `${riders.length} motoriste ne flote`
+              : "Te dhenat mungojne"
+          }
+          tone="green"
+          loading={loading}
+        />
+        <AdminMetric
+          icon={Building2}
+          label="Biznese aktive"
+          value={
+            businesses
+              ? String(
+                  businesses.filter((item) => item.status === "ACTIVE").length,
+                )
+              : "--"
+          }
+          detail={
+            businesses
+              ? `${businesses.length} biznese te regjistruara`
+              : "Te dhenat mungojne"
+          }
+          tone="orange"
+          loading={loading}
+        />
+        <AdminMetric
+          icon={ReceiptText}
+          label="Komisioni i platformes"
+          value={finance ? formatLek(finance.metrics.platformCommission) : "--"}
+          detail="20% e transportit te dorezuar"
+          tone="violet"
+          loading={loading}
+        />
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="admin-panel rounded-3xl border p-5 shadow-happy">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <p className="type-badge uppercase tracking-wide text-happy-orange">
-                Modulet
-              </p>
-              <h2 className="type-section-title mt-1">Akses i shpejte</h2>
+      <div className="dashboard-columns">
+        <section className="orders-section" aria-labelledby="orders-title">
+          <div className="section-heading">
+            <div className="heading-with-count">
+              <h2 id="orders-title">Porosite aktive</h2>
+              <span className="count-badge">{orders?.length ?? "--"}</span>
             </div>
-            <span className="type-secondary text-white/45">
-              {modules.length} module
-            </span>
+            <Link className="text-link" href="/live-map">
+              Shiko ne harte
+              <ArrowRight size={15} />
+            </Link>
           </div>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {modules.map((item) => (
-              <Link
-                className="admin-soft rounded-2xl border p-4 transition hover:border-happy-orange/55"
-                href={item.href}
-                key={item.href}
+          <div className="order-controls">
+            <div
+              className="segmented-control"
+              aria-label="Filtro porosite"
+              role="group"
+            >
+              {[
+                { id: "all", label: "Te gjitha" },
+                { id: "waiting", label: "Ne pritje" },
+                { id: "delivery", label: "Ne dergese" },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  aria-pressed={filter === item.id}
+                  onClick={() => setFilter(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <label className="search-field">
+              <Search size={16} />
+              <input
+                aria-label="Kerko porosi"
+                placeholder="Kerko porosi..."
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              {query && (
+                <button
+                  title="Pastro kerkimin"
+                  aria-label="Pastro kerkimin"
+                  onClick={() => setQuery("")}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </label>
+          </div>
+          <div className="table-scroll" aria-busy={loading}>
+            <table className="orders-table">
+              <thead>
+                <tr>
+                  <th>Porosia / Biznesi</th>
+                  <th>Destinacioni</th>
+                  <th>Statusi</th>
+                  <th>Totali</th>
+                  <th>
+                    <span className="sr-only">Veprime</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {!loading &&
+                  filteredOrders.map((order) => (
+                    <tr key={order.id}>
+                      <td>
+                        <strong>{order.code}</strong>
+                        <span className="cell-secondary">
+                          {order.businessName}
+                        </span>
+                      </td>
+                      <td className="destination-cell">
+                        {order.dropoffAddress}
+                      </td>
+                      <td>
+                        <span
+                          className={`order-status status-${order.status.toLowerCase()}`}
+                        >
+                          {statusLabels[order.status] ?? order.status}
+                        </span>
+                      </td>
+                      <td className="amount-cell">
+                        {formatLek(order.totalAmount)}
+                      </td>
+                      <td>
+                        <Link
+                          className="icon-button"
+                          href="/live-map"
+                          title="Hap harten e porosive"
+                          aria-label={`Hap harten e porosive: ${order.code}`}
+                        >
+                          <ArrowRight size={16} />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          {loading ? (
+            <div className="empty-state" role="status">
+              <RefreshCw size={25} className="spin" />
+              <h3>Po ngarkohen porosite...</h3>
+            </div>
+          ) : orders === null ? (
+            <div className="empty-state">
+              <AlertTriangle size={30} />
+              <h3>Porosite nuk u ngarkuan</h3>
+              <button
+                className="secondary-button"
+                onClick={() => setRefresh((value) => value + 1)}
               >
-                <item.icon className="h-6 w-6 text-happy-orange" />
-                <h3 className="type-product mt-4">{item.label}</h3>
-                <p className="type-secondary mt-1 text-white/52">
-                  {item.description}
-                </p>
-              </Link>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-5">
-          <section className="admin-panel rounded-3xl border p-5 shadow-happy">
-            <div className="flex items-center justify-between">
-              <h2 className="type-section-title">Porosi qe duan vemendje</h2>
-              <AlertTriangle className="h-5 w-5 text-happy-orange" />
+                <RefreshCw size={16} />
+                Provo perseri
+              </button>
             </div>
-            <div className="mt-4 space-y-3">
+          ) : !filteredOrders.length ? (
+            <div className="empty-state">
+              <span className="empty-icon">
+                <Package size={29} strokeWidth={1.4} />
+              </span>
+              <h3>
+                {orders.length ? "Asnje rezultat" : "Nuk ka porosi aktive"}
+              </h3>
               {orders.length ? (
-                orders.slice(0, 4).map((order) => (
-                  <div
-                    className="admin-soft flex items-center justify-between rounded-2xl border p-3"
-                    key={order.id}
-                  >
-                    <span className="type-body">
-                      {order.code} - {order.businessName}
-                    </span>
-                    <span className="type-badge rounded-full bg-happy-orange/15 px-3 py-1 text-happy-orange">
-                      {order.status}
-                    </span>
-                  </div>
-                ))
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setQuery("");
+                    setFilter("all");
+                  }}
+                >
+                  Pastro filtrat
+                </button>
               ) : (
-                <div className="admin-soft rounded-2xl border p-3 text-white/55">
-                  Nuk ka porosi aktive.
-                </div>
+                <p>Porosite e reja do te shfaqen ketu.</p>
               )}
             </div>
-          </section>
+          ) : null}
+          <div className="section-footnote">
+            <span>
+              {loading
+                ? "Duke ngarkuar..."
+                : orders
+                  ? `${filteredOrders.length} nga ${orders.length} porosi aktive`
+                  : "Te dhenat mungojne"}
+            </span>
+            <span>Transporti</span>
+          </div>
+        </section>
 
-          <section className="admin-panel rounded-3xl border p-5 shadow-happy">
-            <ShieldCheck className="h-6 w-6 text-happy-orange" />
-            <h2 className="type-section-title mt-4">Rregull financiar</h2>
-            <p className="type-body mt-2 text-white/58">
-              Cdo transport ndahet automatikisht: 80% motoristi, 20% platforma.
-            </p>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="admin-soft rounded-2xl border p-4">
-                <p className="type-badge uppercase text-white/42">Motoristi</p>
-                <strong className="type-large-price mt-1 block">80%</strong>
-              </div>
-              <div className="rounded-2xl bg-happy-orange p-4 text-white">
-                <p className="type-badge uppercase text-white/75">Platforma</p>
-                <strong className="type-large-price mt-1 block">20%</strong>
-              </div>
+        <aside className="dashboard-aside" aria-label="Flota dhe financat">
+          <section className="overview-section">
+            <div className="section-heading">
+              <h2>Gjendja e flotes</h2>
+              <Bike size={18} className="muted" />
             </div>
+            <div className="fleet-summary">
+              <span className="fleet-value">
+                {loading || !riders ? "--" : online}
+              </span>
+              <span>
+                motoriste online
+                <span className="cell-secondary">
+                  {riders ? `${riders.length} gjithsej` : "Te dhenat mungojne"}
+                </span>
+              </span>
+            </div>
+            <div className="fleet-meter" aria-hidden="true">
+              <span
+                style={{
+                  width: `${riders?.length ? (online / riders.length) * 100 : 0}%`,
+                }}
+              />
+            </div>
+            <div className="detail-row">
+              <span>Jashte linje</span>
+              <strong>
+                {loading || !riders ? "--" : riders.length - online}
+              </strong>
+            </div>
+            <div className="detail-row">
+              <span>Bllokuar nga debiti</span>
+              <strong className={blocked.length ? "warning-text" : ""}>
+                {loading || !riders ? "--" : blocked.length}
+              </strong>
+            </div>
+            <Link className="text-link" href="/riders">
+              Menaxho floten
+              <ArrowRight size={15} />
+            </Link>
           </section>
+          <section className="overview-section">
+            <div className="section-heading">
+              <h2>Bilanci i transportit</h2>
+              <Wallet size={18} className="muted" />
+            </div>
+            <div className="finance-total">
+              {loading || !finance
+                ? "--"
+                : formatLek(finance.metrics.totalTransportFee)}
+            </div>
+            <p className="muted text-sm">
+              {finance
+                ? `${finance.metrics.deliveredOrders} porosi te dorezuara`
+                : "Te dhenat mungojne"}
+            </p>
+            <div className="detail-row finance-row">
+              <span>
+                <i className="legend-dot green" />
+                Motoristet <small>80%</small>
+              </span>
+              <strong>
+                {loading || !finance
+                  ? "--"
+                  : formatLek(finance.metrics.riderEarnings)}
+              </strong>
+            </div>
+            <div className="detail-row finance-row">
+              <span>
+                <i className="legend-dot orange" />
+                Platforma <small>20%</small>
+              </span>
+              <strong>
+                {loading || !finance
+                  ? "--"
+                  : formatLek(finance.metrics.platformCommission)}
+              </strong>
+            </div>
+            <Link className="text-link" href="/finance">
+              Hap financat
+              <ArrowRight size={15} />
+            </Link>
+          </section>
+        </aside>
+      </div>
+
+      <section className="attention-section">
+        <div>
+          {blocked.length || riders === null ? (
+            <AlertTriangle
+              size={20}
+              className={blocked.length ? "warning-text" : "muted"}
+            />
+          ) : (
+            <CheckCircle2 size={20} className="success-text" />
+          )}
+          <h2>Vemendje operative</h2>
         </div>
+        <span>
+          {loading
+            ? "Duke kontrolluar..."
+            : riders === null
+              ? "Gjendja e debitit nuk u ngarkua"
+              : blocked.length
+                ? `${blocked.length} motoriste te bllokuar nga debiti`
+                : "Asnje motorist i bllokuar nga debiti"}
+        </span>
+        {blocked.length > 0 && (
+          <Link className="text-link" href="/riders">
+            Shiko motoristet
+            <ArrowRight size={15} />
+          </Link>
+        )}
+      </section>
+      <section className="quick-actions" aria-label="Veprime te shpejta">
+        <Link href="/businesses?create=1">
+          <span className="quick-icon">
+            <Building2 size={21} />
+          </span>
+          <span>
+            <strong>Shto biznes</strong>
+            <small>Biznes i ri ne platforme</small>
+          </span>
+          <Plus size={19} />
+        </Link>
+        <Link href="/riders?create=1">
+          <span className="quick-icon green">
+            <Bike size={21} />
+          </span>
+          <span>
+            <strong>Shto motorist</strong>
+            <small>Zgjero floten e dergesave</small>
+          </span>
+          <Plus size={19} />
+        </Link>
+        <Link href="/zones">
+          <span className="quick-icon blue">
+            <MapPinned size={21} />
+          </span>
+          <span>
+            <strong>Zonat e sherbimit</strong>
+            <small>Zona dhe tarifa transporti</small>
+          </span>
+          <ArrowRight size={19} />
+        </Link>
       </section>
     </AdminShell>
   );

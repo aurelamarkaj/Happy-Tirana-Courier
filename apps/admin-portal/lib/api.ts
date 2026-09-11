@@ -1,5 +1,6 @@
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const apiTimeoutMs = 12_000;
 
 import { saveAdminSession, type AdminSession } from "./admin-session";
 
@@ -19,18 +20,35 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
 
-  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
-  if (!response.ok) {
-    const body = await response.text();
-    let code = body;
-    try {
-      code = (JSON.parse(body) as { error?: string }).error ?? body;
-    } catch {
-      code = body;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), apiTimeoutMs);
+
+  try {
+    const response = await fetch(`${apiBaseUrl}${path}`, {
+      ...init,
+      headers,
+      signal: init.signal ?? controller.signal,
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      let code = body;
+      try {
+        code = (JSON.parse(body) as { error?: string }).error ?? body;
+      } catch {
+        code = body;
+      }
+      throw new ApiError(response.status, code);
     }
-    throw new ApiError(response.status, code);
+
+    return response.json() as Promise<T>;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new ApiError(408, "ADMIN_API_TIMEOUT");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return response.json() as Promise<T>;
 }
 
 export interface MapPoint {
@@ -78,6 +96,9 @@ export interface AdminRider {
   lastSeenAt: string | null;
   lastLat?: number;
   lastLng?: number;
+  platformDue: number;
+  debitLimitAll: number;
+  isDebitBlocked: boolean;
   deliveriesToday: number;
 }
 
@@ -86,6 +107,8 @@ export interface AdminZone {
   name: string;
   city: string;
   transportFee: number;
+  isSurchargeArea: boolean;
+  surchargeFee: number;
   active: boolean;
   createdAt: string;
   points: MapPoint[];
@@ -187,7 +210,7 @@ export async function createAdminRider(input: {
   phone: string;
   email?: string;
   password: string;
-  vehicleType?: string;
+  vehicleType?: "MOTORBIKE" | "DIESEL";
   licenseNumber?: string;
   status?: "ACTIVE" | "INACTIVE" | "SUSPENDED";
 }) {
@@ -205,6 +228,8 @@ export async function createAdminZone(input: {
   name: string;
   city?: string;
   transportFee: number;
+  isSurchargeArea?: boolean;
+  surchargeFee?: number;
   points: MapPoint[];
 }) {
   return apiFetch<{ zone: AdminZone }>("/admin/zones", {

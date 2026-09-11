@@ -18,6 +18,8 @@ export default function ZonesPage() {
   const [name, setName] = useState("");
   const [city, setCity] = useState("Tirana");
   const [transportFee, setTransportFee] = useState("250");
+  const [isSurchargeArea, setIsSurchargeArea] = useState(false);
+  const [surchargeFee, setSurchargeFee] = useState("100");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -29,7 +31,7 @@ export default function ZonesPage() {
       setZones(data.zones);
       setMessage("");
     } catch {
-      setMessage("Nuk u lexuan zonat nga databaza lokale.");
+      setMessage("Nuk u lexuan zonat Përditësim i porosisë.");
     } finally {
       setLoading(false);
     }
@@ -60,18 +62,22 @@ export default function ZonesPage() {
         name,
         city,
         transportFee: Number(transportFee),
+        isSurchargeArea,
+        surchargeFee: Number(surchargeFee),
         points,
       });
       setName("");
       setTransportFee("250");
+      setIsSurchargeArea(false);
+      setSurchargeFee("100");
       setPoints([]);
       await loadZones();
       setMessage(
-        "Zona u ruajt ne PostGIS dhe mund te perdoret per llogaritjen e transportit.",
+        "Zona u ruajt me sukses dhe është gati për llogaritjen e transportit.",
       );
     } catch {
       setMessage(
-        "Zona nuk u ruajt. Kontrollo qe poligoni te mos kete vija qe priten dhe Postgres te jete aktiv.",
+        "Zona nuk u ruajt. Kontrollo që kufijtë e saj të mos kryqëzohen dhe provo përsëri.",
       );
     } finally {
       setSaving(false);
@@ -94,8 +100,8 @@ export default function ZonesPage() {
           Krijo zone
         </button>
       }
-      description="Zonat ruhen si poligone PostGIS dhe perdoren per cmimin fiks te transportit me ST_Contains."
-      eyebrow="PostGIS"
+      description="Përcakto zonat e dorëzimit në hartë dhe tarifat shtesë për zona të veçanta, si Unaza."
+      eyebrow="Zonat e dorëzimit"
       title="Zona dhe cmime"
     >
       <section className="grid gap-3 md:grid-cols-3">
@@ -132,7 +138,7 @@ export default function ZonesPage() {
             <label className="type-input block">
               Emri zones
               <input
-                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) => setName(event.target.value)}
                 placeholder="P.sh. Tirana Qender"
                 required
@@ -142,7 +148,7 @@ export default function ZonesPage() {
             <label className="type-input block">
               Qyteti
               <input
-                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) => setCity(event.target.value)}
                 placeholder="Tirana"
                 required
@@ -150,15 +156,41 @@ export default function ZonesPage() {
               />
             </label>
             <label className="type-input block">
-              Transporti
+              Transporti reference
               <input
-                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-happy-orange"
+                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) => setTransportFee(event.target.value)}
                 placeholder="250 ALL"
                 required
                 value={transportFee}
               />
             </label>
+            <label className="admin-soft flex items-center justify-between gap-3 rounded-2xl border p-4">
+              <span>
+                <span className="type-product block">Area shtese / Unaza</span>
+                <span className="type-secondary text-white/45">
+                  Shto tarife kur rruga e porosise e kalon kete poligon.
+                </span>
+              </span>
+              <input
+                checked={isSurchargeArea}
+                className="h-5 w-5 accent-happy-orange"
+                onChange={(event) => setIsSurchargeArea(event.target.checked)}
+                type="checkbox"
+              />
+            </label>
+            {isSurchargeArea ? (
+              <label className="type-input block">
+                Tarifa shtese
+                <input
+                  className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
+                  onChange={(event) => setSurchargeFee(event.target.value)}
+                  placeholder="100 ALL"
+                  required
+                  value={surchargeFee}
+                />
+              </label>
+            ) : null}
             <div className="admin-soft rounded-2xl border p-4">
               <p className="type-badge uppercase tracking-wide text-white/42">
                 Pika te zgjedhura
@@ -202,11 +234,14 @@ export default function ZonesPage() {
                 <div className="flex items-center justify-between gap-3">
                   <p className="type-body">{zone.name}</p>
                   <span className="type-badge rounded-full bg-happy-orange/15 px-2 py-1 text-happy-orange">
-                    {formatLek(zone.transportFee)}
+                    {zone.isSurchargeArea
+                      ? `+${formatLek(zone.surchargeFee)}`
+                      : formatLek(zone.transportFee)}
                   </span>
                 </div>
                 <p className="type-secondary mt-1 text-white/45">
                   {zone.points.length} pika · {zone.city}
+                  {zone.isSurchargeArea ? " · Area shtese" : ""}
                 </p>
               </article>
             ))}

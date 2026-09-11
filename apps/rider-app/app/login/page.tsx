@@ -3,7 +3,7 @@
 import { ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { loginRider } from "../../lib/api";
 
 export default function RiderLoginPage() {
@@ -13,14 +13,27 @@ export default function RiderLoginPage() {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  async function submit() {
+  useEffect(() => {
+    if (
+      new URLSearchParams(window.location.search).get("reason") ===
+      "session-expired"
+    ) {
+      setMessage(
+        "Hyrja e ruajtur nuk eshte me e vlefshme. Te lutem, hyr perseri.",
+      );
+    }
+  }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setSubmitting(true);
     setMessage("");
+
     try {
       await loginRider({ email, password });
       router.replace("/");
     } catch {
-      setMessage("Login nuk u krye. Kontrollo API/Postgres ose kredencialet.");
+      setMessage("Hyrja nuk u krye. Kontrollo email-in dhe fjalëkalimin.");
     } finally {
       setSubmitting(false);
     }
@@ -48,12 +61,12 @@ export default function RiderLoginPage() {
 
         <form
           className="rider-panel mx-auto my-8 w-[calc(100%-32px)] max-w-[520px] self-center rounded-2xl border p-5 shadow-happy md:p-8"
-          onSubmit={(event) => event.preventDefault()}
+          onSubmit={submit}
         >
           <div className="grid h-12 w-12 place-items-center rounded-xl bg-happy-orange/15 text-happy-orange">
             <ShieldCheck className="h-6 w-6" />
           </div>
-          <h1 className="type-screen-title mt-4">Login motoristi</h1>
+          <h1 className="type-screen-title mt-4">Hyrja e motoristit</h1>
           <p className="type-body mt-2 text-white/58">
             Kredencialet krijohen nga superadmini. Pas hyrjes hapet dashboard-i
             me porosi live.
@@ -62,10 +75,10 @@ export default function RiderLoginPage() {
           <div className="mt-6 grid gap-4">
             <label className="type-input block">
               Email
-              <span className="rider-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+              <span className="rider-soft mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <Mail className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none placeholder:text-white/35"
+                  className="w-full bg-transparent outline-none focus:outline-none placeholder:text-white/35"
                   onChange={(event) => setEmail(event.target.value)}
                   required
                   type="email"
@@ -75,11 +88,11 @@ export default function RiderLoginPage() {
             </label>
 
             <label className="type-input block">
-              Password
-              <span className="rider-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+              Fjalëkalimi
+              <span className="rider-soft mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <LockKeyhole className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none placeholder:text-white/35"
+                  className="w-full bg-transparent outline-none focus:outline-none placeholder:text-white/35"
                   onChange={(event) => setPassword(event.target.value)}
                   required
                   type="password"
@@ -90,7 +103,10 @@ export default function RiderLoginPage() {
           </div>
 
           {message ? (
-            <p className="type-warning mt-4 rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-red-500">
+            <p
+              role="alert"
+              className="type-warning mt-4 rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-red-500"
+            >
               {message}
             </p>
           ) : null}
@@ -98,8 +114,7 @@ export default function RiderLoginPage() {
           <button
             className="type-cta mt-6 flex h-12 w-full items-center justify-center rounded-lg bg-happy-orange text-white happy-pill-shadow"
             disabled={submitting}
-            onClick={submit}
-            type="button"
+            type="submit"
           >
             {submitting ? "Duke hyre..." : "Hyr"}
             <ArrowRight className="ml-2 h-5 w-5" />

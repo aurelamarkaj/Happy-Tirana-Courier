@@ -1,6 +1,12 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import crypto from "node:crypto";
-import { closeDb, pool } from "@happy-tirana/db";
+import { fileURLToPath } from "node:url";
+
+dotenv.config({
+  path: fileURLToPath(new URL("../../../.env", import.meta.url)),
+});
+
+const { closeDb, pool } = await import("@happy-tirana/db");
 
 function hashPassword(
   password: string,
@@ -25,12 +31,12 @@ if (!email || !phone || !password || password.includes("replace-with")) {
 
 await pool.query(
   `INSERT INTO users (name, email, phone, password_hash, role, status)
-   VALUES ($1, $2, $3, $4, 'ADMIN', 'ACTIVE')
+   VALUES ($1, $2, $3, $4, 'SUPERADMIN', 'ACTIVE')
    ON CONFLICT (email) DO UPDATE SET
      name = EXCLUDED.name,
      phone = EXCLUDED.phone,
      password_hash = EXCLUDED.password_hash,
-     role = 'ADMIN',
+     role = 'SUPERADMIN',
      status = 'ACTIVE',
      updated_at = now()`,
   [name, email, phone, hashPassword(password)],

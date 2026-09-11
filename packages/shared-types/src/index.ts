@@ -1,9 +1,13 @@
-export type UserRole = "ADMIN" | "OPERATOR" | "BUSINESS" | "RIDER";
+export type UserRole =
+  "SUPERADMIN" | "ADMIN" | "OPERATOR" | "BUSINESS" | "RIDER";
 export type UserStatus = "ACTIVE" | "INACTIVE" | "SUSPENDED";
-export type OrderStatus = "CREATED" | "OFFERED" | "ACCEPTED" | "PICKED_UP" | "DELIVERED" | "CANCELLED";
-export type OfferStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "CANCELLED" | "EXPIRED";
+export type OrderStatus =
+  "CREATED" | "OFFERED" | "ACCEPTED" | "PICKED_UP" | "DELIVERED" | "CANCELLED";
+export type OfferStatus =
+  "PENDING" | "ACCEPTED" | "REJECTED" | "CANCELLED" | "EXPIRED";
 export type SettlementStatus = "DRAFT" | "OPEN" | "PAID" | "VOID";
-export type BusinessCategory = "FOOD" | "MARKET" | "PHARMACY" | "DOCUMENTS" | "OTHER";
+export type BusinessCategory =
+  "FOOD" | "MARKET" | "PHARMACY" | "DOCUMENTS" | "OTHER";
 
 export interface User {
   id: string;
@@ -93,5 +97,9 @@ export interface RealtimeEvents {
   "order.accepted": { orderId: string; riderId: string };
   "order.status_changed": { orderId: string; status: OrderStatus };
   "rider.location_updated": RiderLocation;
-  "settlement.created": { settlementId: string; riderId: string; platformDue: number };
+  "settlement.created": {
+    settlementId: string;
+    riderId: string;
+    platformDue: number;
+  };
 }

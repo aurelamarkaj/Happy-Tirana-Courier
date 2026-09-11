@@ -1,13 +1,21 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import crypto from "node:crypto";
 import http from "node:http";
+import { fileURLToPath } from "node:url";
 import type { PoolClient } from "pg";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { Server } from "socket.io";
 import { z } from "zod";
-import { pool } from "@happy-tirana/db";
+import { getGoogleRoadRoute, type RouteInput } from "./google-routes.js";
+import { buildItinerary } from "./rider-itinerary.js";
+
+dotenv.config({
+  path: fileURLToPath(new URL("../../../.env", import.meta.url)),
+});
+
+const { pool } = await import("@happy-tirana/db");
 
 const app = express();
 const server = http.createServer(app);
@@ -16,8 +24,10 @@ const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 const corsOrigins = [
-  /^http:\/\/localhost:300\d$/,
-  /^http:\/\/127\.0\.0\.1:300\d$/,
+  /^http:\/\/localhost:30\d\d$/,
+  /^http:\/\/localhost:31\d\d$/,
+  /^http:\/\/127\.0\.0\.1:30\d\d$/,
+  /^http:\/\/127\.0\.0\.1:31\d\d$/,
   ...allowedOrigins,
 ];
 const sampleBusinessIds = [
@@ -43,7 +53,21 @@ const io = new Server(server, {
   },
 });
 const nearbyRiderOfferLimit = 5;
-const orderOfferTtlMinutes = 3;
+const riderDebitLimitAll = Number(process.env.RIDER_DEBIT_LIMIT_ALL ?? 10000);
+const nearbyRiderRadiusMeters = Number(
+  process.env.NEARBY_RIDER_RADIUS_METERS ?? 1000,
+);
+const offerEscalationSeconds = Number(
+  process.env.OFFER_ESCALATION_SECONDS ?? 60,
+);
+const adminUnassignedAlertMinutes = Number(
+  process.env.ADMIN_UNASSIGNED_ALERT_MINUTES ?? 5,
+);
+const longDistanceThresholdMeters = 3000;
+const baseTransportFeeAll = 300;
+const extraMeterFeeAll = 0.1;
+const ringSurchargeDefaultAll = 100;
+const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim() ?? "";
 
 app.use(helmet());
 app.use(
@@ -102,6 +126,181 @@ function numericOrUndefined(value: unknown) {
   if (value === null || value === undefined || value === "") return undefined;
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function roundMoney(value: number) {
+  return Number(value.toFixed(2));
+}
+
+function parseLatLngFromText(value: string) {
+  const text = decodeURIComponent(value);
+  const patterns = [
+    /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+    /(?:q|ll|query|destination|daddr)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const lat = Number(match[1]);
+    const lng = Number(match[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+
+  return null;
+}
+
+function decodeGooglePolyline(encoded: string) {
+  const points: Array<{ lat: number; lng: number }> = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < encoded.length) {
+    let shift = 0;
+    let result = 0;
+    let byte = 0;
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+
+    shift = 0;
+    result = 0;
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
+
+    points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+
+  return points;
+}
+
+async function resolveGoogleMapsLink(googleMapsUrl?: string | null) {
+  const rawUrl = googleMapsUrl?.trim();
+  if (!rawUrl) return null;
+
+  const direct = parseLatLngFromText(rawUrl);
+  if (direct) return { ...direct, resolvedUrl: rawUrl };
+
+  try {
+    const url = new URL(rawUrl);
+    if (!["maps.app.goo.gl", "goo.gl"].includes(url.hostname)) return null;
+
+    const response = await fetch(rawUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: AbortSignal.timeout(5000),
+    });
+    const resolvedUrl = response.url || rawUrl;
+    const fromRedirect = parseLatLngFromText(resolvedUrl);
+    if (fromRedirect) return { ...fromRedirect, resolvedUrl };
+
+    const body = await response.text();
+    const fromBody = parseLatLngFromText(body);
+    return fromBody ? { ...fromBody, resolvedUrl } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getRouteDistanceMeters(input: RouteInput) {
+  return getGoogleRoadRoute(googleMapsApiKey, input);
+}
+
+async function calculateBusinessTransportQuote(
+  client: PoolClient,
+  input: {
+    businessId: string;
+    lat: number;
+    lng: number;
+    googleMapsUrl?: string | null;
+    transportFeeOverride?: number;
+  },
+) {
+  const business = await client.query(
+    `SELECT id,
+            COALESCE(lat, 41.3275)::numeric AS lat,
+            COALESCE(lng, 19.8187)::numeric AS lng
+     FROM businesses
+     WHERE id = $1
+       AND status = 'ACTIVE'`,
+    [input.businessId],
+  );
+  if (!business.rows[0]) throw new Error("BUSINESS_NOT_FOUND");
+
+  const zoneResult = await client.query(
+    "SELECT * FROM resolve_zone_for_point($1, $2)",
+    [input.lat, input.lng],
+  );
+  const zone = zoneResult.rows[0];
+  if (!zone) throw new Error("DELIVERY_ZONE_NOT_FOUND");
+
+  const originLat = Number(business.rows[0].lat);
+  const originLng = Number(business.rows[0].lng);
+  const route = await getRouteDistanceMeters({
+    originLat,
+    originLng,
+    destinationLat: input.lat,
+    destinationLng: input.lng,
+  });
+  const extraMeters = Math.max(
+    0,
+    route.distanceMeters - longDistanceThresholdMeters,
+  );
+  const distanceFee = roundMoney(
+    baseTransportFeeAll + extraMeters * extraMeterFeeAll,
+  );
+
+  const surcharge = await client.query(
+    `SELECT COALESCE(SUM(surcharge_fee), 0)::numeric AS fee,
+            COUNT(*)::int AS zones
+     FROM zones
+     WHERE active = true
+       AND is_surcharge_area = true
+       AND ST_Intersects(
+         polygon,
+         ST_SetSRID(ST_MakeLine(ST_MakePoint($1, $2), ST_MakePoint($3, $4)), 4326)
+       )`,
+    [originLng, originLat, input.lng, input.lat],
+  );
+  const ringSurchargeFee = Number(surcharge.rows[0]?.fee ?? 0);
+  const calculatedTransportFee = roundMoney(
+    distanceFee + (ringSurchargeFee || 0),
+  );
+  const hasOverride =
+    input.transportFeeOverride !== undefined &&
+    Number.isFinite(input.transportFeeOverride);
+  const finalTransportFee = roundMoney(
+    hasOverride
+      ? Math.max(0, input.transportFeeOverride ?? 0)
+      : calculatedTransportFee,
+  );
+
+  return {
+    zoneId: zone.zone_id as string,
+    zoneName: zone.zone_name as string,
+    distanceMeters: route.distanceMeters,
+    distanceKm: roundMoney(route.distanceMeters / 1000),
+    distanceSource: route.source,
+    calculatedTransportFee,
+    finalTransportFee,
+    transportFeeOverridden: hasOverride,
+    ringSurchargeApplied: ringSurchargeFee > 0,
+    ringSurchargeFee: roundMoney(ringSurchargeFee || 0),
+    routePreference:
+      route.source === "HAVERSINE_ROAD_ESTIMATE_FALLBACK"
+        ? "ESTIMATED_ROAD_DISTANCE_FALLBACK"
+        : "SHORTEST_ROAD_IGNORE_TRAFFIC",
+    googleMapsUrl: input.googleMapsUrl?.trim() || null,
+  };
 }
 
 function mapCustomer(row: Record<string, unknown>) {
@@ -170,21 +369,19 @@ async function mergeGuestCartIntoCustomerCart(
   ]);
 }
 
-type NominatimPlace = {
-  osm_id?: number | string;
-  display_name?: string;
-  lat?: string;
-  lon?: string;
-  address?: {
-    road?: string;
-    pedestrian?: string;
-    neighbourhood?: string;
-    suburb?: string;
-    city?: string;
-    town?: string;
-    village?: string;
-    county?: string;
-    country?: string;
+type GoogleGeocodeResult = {
+  place_id?: string;
+  formatted_address?: string;
+  address_components?: Array<{
+    long_name: string;
+    short_name: string;
+    types: string[];
+  }>;
+  geometry?: {
+    location?: {
+      lat?: number;
+      lng?: number;
+    };
   };
 };
 
@@ -221,6 +418,11 @@ function mapRiderProfile(row: Record<string, unknown>) {
     isOnline: row.is_online,
     status: row.status,
     lastSeenAt: row.last_seen_at,
+    platformDue: Number(row.platform_due ?? 0),
+    debitLimitAll: Number(row.debit_limit_all ?? riderDebitLimitAll),
+    isDebitBlocked:
+      Number(row.platform_due ?? 0) >=
+      Number(row.debit_limit_all ?? riderDebitLimitAll),
   };
 }
 
@@ -245,6 +447,15 @@ function mapRiderOrder(row: Record<string, unknown>) {
     platformCommission: Number(row.platform_commission),
     riderEarning: Number(row.rider_earning),
     totalAmount: Number(row.total_amount),
+    readyMinutes: Number(row.ready_minutes ?? 10),
+    routeDistanceMeters: numericOrUndefined(row.route_distance_meters),
+    routeDistanceSource: row.route_distance_source,
+    routePreference: row.route_preference,
+    googleMapsUrl: row.google_maps_url,
+    calculatedTransportFee: numericOrUndefined(row.calculated_transport_fee),
+    transportFeeOverridden: Boolean(row.transport_fee_overridden),
+    ringSurchargeApplied: Boolean(row.ring_surcharge_applied),
+    ringSurchargeFee: Number(row.ring_surcharge_fee ?? 0),
     createdAt: row.created_at,
     acceptedAt: row.accepted_at,
     pickedUpAt: row.picked_up_at,
@@ -288,6 +499,15 @@ function mapBusinessDashboardOrder(row: Record<string, unknown>) {
     productValue: Number(row.product_value),
     transportFee: Number(row.transport_fee),
     totalAmount: Number(row.total_amount),
+    readyMinutes: Number(row.ready_minutes ?? 10),
+    routeDistanceMeters: numericOrUndefined(row.route_distance_meters),
+    routeDistanceSource: row.route_distance_source,
+    routePreference: row.route_preference,
+    googleMapsUrl: row.google_maps_url,
+    calculatedTransportFee: numericOrUndefined(row.calculated_transport_fee),
+    transportFeeOverridden: Boolean(row.transport_fee_overridden),
+    ringSurchargeApplied: Boolean(row.ring_surcharge_applied),
+    ringSurchargeFee: Number(row.ring_surcharge_fee ?? 0),
     riderEarning: Number(row.rider_earning),
     platformCommission: Number(row.platform_commission),
     riderName: row.rider_name,
@@ -310,6 +530,15 @@ async function getBusinessDashboardOrderById(
             o.total_amount,
             o.rider_earning,
             o.platform_commission,
+            o.ready_minutes,
+            o.route_distance_meters,
+            o.route_distance_source,
+            o.route_preference,
+            o.google_maps_url,
+            o.calculated_transport_fee,
+            o.transport_fee_overridden,
+            o.ring_surcharge_applied,
+            o.ring_surcharge_fee,
             o.created_at,
             c.name AS customer_name,
             c.phone AS customer_phone,
@@ -377,6 +606,11 @@ function mapAdminRider(row: Record<string, unknown>) {
     lastSeenAt: row.last_seen_at,
     lastLat: numericOrUndefined(row.last_lat),
     lastLng: numericOrUndefined(row.last_lng),
+    platformDue: Number(row.platform_due ?? 0),
+    debitLimitAll: Number(row.debit_limit_all ?? riderDebitLimitAll),
+    isDebitBlocked:
+      Number(row.platform_due ?? 0) >=
+      Number(row.debit_limit_all ?? riderDebitLimitAll),
     deliveriesToday: Number(row.deliveries_today ?? 0),
   };
 }
@@ -413,20 +647,26 @@ function mapAdminZone(row: Record<string, unknown>) {
     name: row.name,
     city: row.city,
     transportFee: Number(row.transport_fee),
+    isSurchargeArea: Boolean(row.is_surcharge_area),
+    surchargeFee: Number(row.surcharge_fee ?? ringSurchargeDefaultAll),
     active: row.active,
     createdAt: row.created_at,
     points: ring.map(([lng, lat]) => ({ lat, lng })),
   };
 }
 
-async function offerBusinessOrderToNearestRiders(
+type OfferScope = "NEARBY" | "ALL";
+
+async function offerBusinessOrderToEligibleRiders(
   client: PoolClient,
   orderId: string,
+  scope: OfferScope = "NEARBY",
 ) {
-  const nearestRiders = await client.query(
-    `WITH pickup AS (
+  const riders = await client.query(
+    `WITH order_context AS (
        SELECT COALESCE(b.lat, 41.3275)::numeric AS lat,
-              COALESCE(b.lng, 19.8187)::numeric AS lng
+              COALESCE(b.lng, 19.8187)::numeric AS lng,
+              COALESCE(o.route_distance_meters, 0)::int AS route_distance_meters
        FROM orders o
        JOIN businesses b ON b.id = o.business_id
        WHERE o.id = $1
@@ -434,13 +674,15 @@ async function offerBusinessOrderToNearestRiders(
      SELECT rp.id,
             rp.user_id,
             u.name,
+            rp.vehicle_type,
             latest.lat,
             latest.lng,
+            COALESCE(debt.platform_due, 0)::numeric AS platform_due,
             CASE
               WHEN latest.point IS NULL THEN NULL
               ELSE ST_Distance(
                 latest.point,
-                ST_SetSRID(ST_MakePoint((SELECT lng FROM pickup), (SELECT lat FROM pickup)), 4326)::geography
+                ST_SetSRID(ST_MakePoint((SELECT lng FROM order_context), (SELECT lat FROM order_context)), 4326)::geography
               )
             END AS distance_meters
      FROM rider_profiles rp
@@ -452,60 +694,112 @@ async function offerBusinessOrderToNearestRiders(
        ORDER BY rl.recorded_at DESC
        LIMIT 1
      ) latest ON true
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(le.amount), 0)::numeric AS platform_due
+       FROM ledger_entries le
+       WHERE le.rider_id = rp.id
+         AND le.direction = 'RIDER_OWES_PLATFORM'
+         AND le.status = 'OPEN'
+     ) debt ON true
      WHERE rp.is_online = true
        AND rp.status = 'ACTIVE'
        AND u.status = 'ACTIVE'
+       AND COALESCE(debt.platform_due, 0) < rp.debit_limit_all
+       AND (
+         (SELECT route_distance_meters FROM order_context) > $5
+         OR rp.vehicle_type = 'MOTORBIKE'
+       )
+       AND (
+         SELECT COUNT(*) FROM orders active_order
+         WHERE active_order.assigned_rider_id = rp.id
+           AND active_order.status IN ('ACCEPTED', 'PICKED_UP')
+       ) < 4
+       AND NOT EXISTS (
+         SELECT 1
+         FROM order_offers existing
+         WHERE existing.order_id = $1
+           AND existing.rider_id = rp.id
+           AND existing.status = 'PENDING'
+       )
+       AND (
+         $3::text = 'ALL'
+         OR (
+           latest.point IS NOT NULL
+           AND ST_Distance(
+             latest.point,
+             ST_SetSRID(ST_MakePoint((SELECT lng FROM order_context), (SELECT lat FROM order_context)), 4326)::geography
+           ) <= $4
+         )
+       )
      ORDER BY distance_meters ASC NULLS LAST, rp.last_seen_at DESC NULLS LAST
-     LIMIT $2`,
-    [orderId, nearbyRiderOfferLimit],
+     LIMIT CASE WHEN $3::text = 'NEARBY' THEN $2 ELSE 500 END`,
+    [
+      orderId,
+      nearbyRiderOfferLimit,
+      scope,
+      nearbyRiderRadiusMeters,
+      longDistanceThresholdMeters,
+    ],
   );
-
-  if (nearestRiders.rows.length === 0) return [];
 
   await client.query(
     `UPDATE orders
      SET status = 'OFFERED',
-         version = version + 1
+         version = version + 1,
+         offer_scope = $2,
+         initial_offer_sent_at = COALESCE(initial_offer_sent_at, now()),
+         escalated_at = CASE WHEN $2 = 'ALL' THEN COALESCE(escalated_at, now()) ELSE escalated_at END
      WHERE id = $1
-       AND status = 'CREATED'
+       AND status IN ('CREATED', 'OFFERED')
        AND assigned_rider_id IS NULL`,
-    [orderId],
+    [orderId, scope],
   );
 
-  for (const rider of nearestRiders.rows) {
+  for (const rider of riders.rows) {
     await client.query(
       `INSERT INTO order_offers (order_id, rider_id, status, expires_at)
-       VALUES ($1, $2, 'PENDING', now() + ($3::int * interval '1 minute'))
+       VALUES ($1, $2, 'PENDING', now() + ($3::int * interval '1 second'))
        ON CONFLICT (order_id, rider_id) DO UPDATE
        SET status = 'PENDING',
            sent_at = now(),
            responded_at = NULL,
            expires_at = EXCLUDED.expires_at
        WHERE order_offers.status IN ('PENDING', 'EXPIRED', 'CANCELLED')`,
-      [orderId, rider.id, orderOfferTtlMinutes],
+      [orderId, rider.id, offerEscalationSeconds],
     );
     await client.query(
       `INSERT INTO notifications (user_id, order_id, type, channel, status, payload, sent_at)
        VALUES (
          $1,
          $2,
-         'ORDER_OFFERED_NEARBY',
+         $5,
          'SOCKET',
          'SENT',
          jsonb_build_object(
            'riderId', $3::uuid,
            'distanceMeters', $4::numeric,
-           'message', 'Ke nje porosi te re afer teje.'
+           'vehicleType', $6::text,
+           'scope', $7::text,
+           'message', CASE WHEN $7::text = 'NEARBY' THEN 'Ke nje porosi te re brenda 1km.' ELSE 'Porosia eshte hapur per te gjithe motorristet e lire.' END
          ),
          now()
        )`,
-      [rider.user_id, orderId, rider.id, rider.distance_meters ?? null],
+      [
+        rider.user_id,
+        orderId,
+        rider.id,
+        rider.distance_meters ?? null,
+        scope === "NEARBY" ? "ORDER_OFFERED_NEARBY_1KM" : "ORDER_OFFERED_ALL",
+        rider.vehicle_type,
+        scope,
+      ],
     );
   }
 
-  return nearestRiders.rows.map((rider) => ({
+  return riders.rows.map((rider) => ({
     id: String(rider.id),
     name: String(rider.name),
+    vehicleType: String(rider.vehicle_type),
     distanceMeters:
       rider.distance_meters === null || rider.distance_meters === undefined
         ? null
@@ -513,38 +807,130 @@ async function offerBusinessOrderToNearestRiders(
   }));
 }
 
-async function refreshOffersForRider(client: PoolClient, riderId: string) {
-  const rider = await client.query(
-    "SELECT is_online FROM rider_profiles WHERE id = $1 AND status = 'ACTIVE'",
-    [riderId],
+async function createAdminNotification(
+  client: PoolClient,
+  input: { type: string; orderId?: string; payload: Record<string, unknown> },
+) {
+  await client.query(
+    `INSERT INTO notifications (user_id, order_id, type, channel, status, payload, sent_at)
+     SELECT u.id, $1::uuid, $2, 'SOCKET', 'SENT', $3::jsonb, now()
+     FROM users u
+     WHERE u.role::text IN ('SUPERADMIN', 'ADMIN', 'OPERATOR')
+       AND u.status = 'ACTIVE'`,
+    [input.orderId ?? null, input.type, JSON.stringify(input.payload)],
   );
-  if (!rider.rows[0]?.is_online) return;
+  io.to("admin").emit("admin.alert", input);
+}
 
+async function processDueOrderDispatches(client: PoolClient) {
   await client.query(
     "UPDATE order_offers SET status = 'EXPIRED' WHERE status = 'PENDING' AND expires_at <= now()",
   );
 
-  const created = await client.query(
-    `UPDATE orders
-     SET status = 'OFFERED',
-         version = version + 1
+  const dueCreated = await client.query(
+    `SELECT id
+     FROM orders
      WHERE status = 'CREATED'
        AND assigned_rider_id IS NULL
-     RETURNING id`,
+       AND offer_after <= now()
+     ORDER BY created_at
+     LIMIT 50`,
   );
 
-  for (const order of created.rows) {
-    await client.query(
-      "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', 'Offered automatically to online riders')",
-      [order.id],
+  for (const order of dueCreated.rows) {
+    const riders = await offerBusinessOrderToEligibleRiders(
+      client,
+      order.id,
+      "NEARBY",
     );
-    await offerBusinessOrderToNearestRiders(client, order.id);
+    await client.query(
+      "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', $2)",
+      [
+        order.id,
+        riders.length > 0
+          ? "Offered to riders within 1km of the business"
+          : "Waiting 60 seconds before opening to all eligible riders",
+      ],
+    );
   }
 
-  await client.query(
-    "UPDATE notifications SET status = 'SENT', sent_at = COALESCE(sent_at, now()) WHERE user_id = (SELECT user_id FROM rider_profiles WHERE id = $1) AND status = 'PENDING'",
+  const dueEscalation = await client.query(
+    `SELECT id
+     FROM orders
+     WHERE status = 'OFFERED'
+       AND assigned_rider_id IS NULL
+       AND initial_offer_sent_at <= now() - ($1::int * interval '1 second')
+       AND escalated_at IS NULL
+     ORDER BY initial_offer_sent_at
+     LIMIT 50`,
+    [offerEscalationSeconds],
+  );
+
+  for (const order of dueEscalation.rows) {
+    await offerBusinessOrderToEligibleRiders(client, order.id, "ALL");
+    await client.query(
+      "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'OFFERED', 'OFFERED', 'Escalated to all eligible riders after 60 seconds')",
+      [order.id],
+    );
+  }
+
+  const unassigned = await client.query(
+    `UPDATE orders
+     SET unassigned_alerted_at = now()
+     WHERE status IN ('CREATED', 'OFFERED')
+       AND assigned_rider_id IS NULL
+       AND created_at <= now() - ($1::int * interval '1 minute')
+       AND unassigned_alerted_at IS NULL
+     RETURNING id, code, created_at`,
+    [adminUnassignedAlertMinutes],
+  );
+
+  for (const order of unassigned.rows) {
+    await createAdminNotification(client, {
+      type: "ORDER_UNASSIGNED_5_MIN",
+      orderId: order.id,
+      payload: {
+        orderId: order.id,
+        code: order.code,
+        message: "Porosia nuk eshte pranuar nga asnje motorrist per 5 minuta.",
+      },
+    });
+  }
+}
+
+async function refreshOffersForRider(client: PoolClient, riderId: string) {
+  const rider = await client.query(
+    `SELECT rp.is_online,
+            rp.debit_limit_all,
+            COALESCE(debt.platform_due, 0)::numeric AS platform_due
+     FROM rider_profiles rp
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(le.amount), 0)::numeric AS platform_due
+       FROM ledger_entries le
+       WHERE le.rider_id = rp.id
+         AND le.direction = 'RIDER_OWES_PLATFORM'
+         AND le.status = 'OPEN'
+     ) debt ON true
+     WHERE rp.id = $1
+       AND rp.status = 'ACTIVE'`,
     [riderId],
   );
+  if (!rider.rows[0]?.is_online) return;
+  if (
+    Number(rider.rows[0].platform_due) >= Number(rider.rows[0].debit_limit_all)
+  ) {
+    await createAdminNotification(client, {
+      type: "RIDER_DEBIT_LIMIT_REACHED",
+      payload: {
+        riderId,
+        platformDue: Number(rider.rows[0].platform_due),
+        debitLimitAll: Number(rider.rows[0].debit_limit_all),
+      },
+    });
+    return;
+  }
+
+  await processDueOrderDispatches(client);
 }
 
 async function getRiderOrderById(orderId: string, riderId?: string) {
@@ -558,6 +944,15 @@ async function getRiderOrderById(orderId: string, riderId?: string) {
             o.platform_commission,
             o.rider_earning,
             o.total_amount,
+            o.ready_minutes,
+            o.route_distance_meters,
+            o.route_distance_source,
+            o.route_preference,
+            o.google_maps_url,
+            o.calculated_transport_fee,
+            o.transport_fee_overridden,
+            o.ring_surcharge_applied,
+            o.ring_surcharge_fee,
             o.created_at,
             o.accepted_at,
             o.picked_up_at,
@@ -587,19 +982,6 @@ async function getRiderOrderById(orderId: string, riderId?: string) {
 }
 
 async function buildRiderDashboard(riderId: string) {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-    await refreshOffersForRider(client, riderId);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-
   const rider = await pool.query(
     `SELECT rp.id,
             rp.user_id,
@@ -609,9 +991,18 @@ async function buildRiderDashboard(riderId: string) {
             rp.license_number,
             rp.is_online,
             rp.status,
-            rp.last_seen_at
+            rp.last_seen_at,
+            rp.debit_limit_all,
+            COALESCE(debt.platform_due, 0)::numeric AS platform_due
      FROM rider_profiles rp
      JOIN users u ON u.id = rp.user_id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(le.amount), 0)::numeric AS platform_due
+       FROM ledger_entries le
+       WHERE le.rider_id = rp.id
+         AND le.direction = 'RIDER_OWES_PLATFORM'
+         AND le.status = 'OPEN'
+     ) debt ON true
      WHERE rp.id = $1`,
     [riderId],
   );
@@ -628,6 +1019,15 @@ async function buildRiderDashboard(riderId: string) {
            o.platform_commission,
            o.rider_earning,
            o.total_amount,
+           o.ready_minutes,
+           o.route_distance_meters,
+           o.route_distance_source,
+           o.route_preference,
+           o.google_maps_url,
+           o.calculated_transport_fee,
+           o.transport_fee_overridden,
+           o.ring_surcharge_applied,
+           o.ring_surcharge_fee,
            o.created_at,
            o.accepted_at,
            o.picked_up_at,
@@ -653,8 +1053,7 @@ async function buildRiderDashboard(riderId: string) {
     `${orderSelect}
      WHERE o.assigned_rider_id = $1
        AND o.status IN ('ACCEPTED', 'PICKED_UP')
-     ORDER BY o.accepted_at DESC
-     LIMIT 1`,
+     ORDER BY o.accepted_at ASC, o.id ASC`,
     [riderId],
   );
 
@@ -702,6 +1101,7 @@ async function buildRiderDashboard(riderId: string) {
 
   return {
     rider: mapRiderProfile(rider.rows[0]),
+    activeOrders: activeOrder.rows.map(mapRiderOrder),
     activeOrder: activeOrder.rows[0]
       ? mapRiderOrder(activeOrder.rows[0])
       : null,
@@ -718,31 +1118,38 @@ async function buildRiderDashboard(riderId: string) {
   };
 }
 
-function addressFromOsm(place: NominatimPlace): AddressSuggestion | null {
-  const lat = Number(place.lat);
-  const lng = Number(place.lon);
+function addressFromGoogleGeocode(
+  place: GoogleGeocodeResult,
+): AddressSuggestion | null {
+  const lat = Number(place.geometry?.location?.lat);
+  const lng = Number(place.geometry?.location?.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
-  const address = place.address ?? {};
+  const component = (type: string) =>
+    place.address_components?.find((item) => item.types.includes(type))
+      ?.long_name;
   const label =
-    address.road ??
-    address.pedestrian ??
-    place.display_name?.split(",")[0] ??
+    component("route") ??
+    component("street_address") ??
+    place.formatted_address?.split(",")[0] ??
     "Adrese ne Shqiperi";
   const city =
-    address.city ??
-    address.town ??
-    address.village ??
-    address.county ??
+    component("locality") ??
+    component("administrative_area_level_2") ??
+    component("administrative_area_level_1") ??
     "Shqiperi";
-  const area = address.neighbourhood ?? address.suburb ?? city;
+  const area =
+    component("sublocality") ??
+    component("neighborhood") ??
+    component("administrative_area_level_3") ??
+    city;
 
   return {
-    id: `osm-${place.osm_id ?? `${lat}-${lng}`}`,
+    id: `google-${place.place_id ?? `${lat}-${lng}`}`,
     label,
     area,
     city,
-    details: place.display_name ?? `${label}, ${city}`,
+    details: place.formatted_address ?? `${label}, ${city}`,
     lat,
     lng,
   };
@@ -788,6 +1195,38 @@ async function cacheAddressSuggestion(suggestion: AddressSuggestion) {
   );
 }
 
+async function resolveAddressTextLocation(addressText?: string | null) {
+  const query = addressText?.trim();
+  if (!query || query.length < 3) return null;
+
+  const cached = await searchCachedAddresses(query, 1);
+  if (cached[0]) return cached[0];
+
+  if (googleMapsApiKey) {
+    try {
+      const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+      url.searchParams.set("address", query);
+      url.searchParams.set("components", "country:AL");
+      url.searchParams.set("region", "al");
+      url.searchParams.set("key", googleMapsApiKey);
+
+      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const data = (await response.json()) as {
+        results?: GoogleGeocodeResult[];
+      };
+      const suggestion = data.results
+        ?.map(addressFromGoogleGeocode)
+        .find((item): item is AddressSuggestion => item !== null);
+      if (suggestion) await cacheAddressSuggestion(suggestion);
+      return suggestion ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 app.post("/admin/auth/login", async (req, res, next) => {
   try {
     const body = z
@@ -800,7 +1239,7 @@ app.post("/admin/auth/login", async (req, res, next) => {
       `SELECT id, name, email, phone, password_hash, role
        FROM users
        WHERE email = $1
-         AND role IN ('ADMIN', 'OPERATOR')
+         AND role::text IN ('SUPERADMIN', 'ADMIN', 'OPERATOR')
          AND status = 'ACTIVE'`,
       [body.email],
     );
@@ -1039,8 +1478,10 @@ app.get("/admin/riders", async (_req, res, next) => {
               rp.is_online,
               rp.status,
               rp.last_seen_at,
+              rp.debit_limit_all,
               latest.lat AS last_lat,
               latest.lng AS last_lng,
+              COALESCE(debt.platform_due, 0)::numeric AS platform_due,
               COUNT(o.id) FILTER (WHERE o.status = 'DELIVERED' AND o.delivered_at >= date_trunc('day', now()))::int AS deliveries_today
        FROM rider_profiles rp
        JOIN users u ON u.id = rp.user_id
@@ -1051,8 +1492,15 @@ app.get("/admin/riders", async (_req, res, next) => {
          ORDER BY rl.recorded_at DESC
          LIMIT 1
        ) latest ON true
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(le.amount), 0)::numeric AS platform_due
+         FROM ledger_entries le
+         WHERE le.rider_id = rp.id
+           AND le.direction = 'RIDER_OWES_PLATFORM'
+           AND le.status = 'OPEN'
+       ) debt ON true
        LEFT JOIN orders o ON o.assigned_rider_id = rp.id
-       GROUP BY rp.id, u.id, latest.lat, latest.lng
+       GROUP BY rp.id, u.id, latest.lat, latest.lng, debt.platform_due
        ORDER BY rp.created_at DESC`,
     );
 
@@ -1072,7 +1520,7 @@ app.post("/admin/riders", async (req, res, next) => {
         phone: z.string().min(6),
         email: z.string().email().optional().or(z.literal("")),
         password: z.string().min(6),
-        vehicleType: z.string().min(2).optional().or(z.literal("")),
+        vehicleType: z.enum(["MOTORBIKE", "DIESEL"]).optional(),
         licenseNumber: z.string().optional().or(z.literal("")),
         status: z.enum(["ACTIVE", "INACTIVE", "SUSPENDED"]).optional(),
       })
@@ -1098,7 +1546,7 @@ app.post("/admin/riders", async (req, res, next) => {
        RETURNING id`,
       [
         userResult.rows[0].id,
-        body.vehicleType?.trim() || "MOTORBIKE",
+        body.vehicleType ?? "MOTORBIKE",
         body.licenseNumber ?? "",
         body.status ?? "ACTIVE",
       ],
@@ -1115,8 +1563,10 @@ app.post("/admin/riders", async (req, res, next) => {
               rp.is_online,
               rp.status,
               rp.last_seen_at,
+              rp.debit_limit_all,
               NULL::numeric AS last_lat,
               NULL::numeric AS last_lng,
+              0::numeric AS platform_due,
               0::int AS deliveries_today
        FROM rider_profiles rp
        JOIN users u ON u.id = rp.user_id
@@ -1142,6 +1592,8 @@ app.get("/admin/zones", async (_req, res, next) => {
               name,
               city,
               transport_fee,
+              is_surcharge_area,
+              surcharge_fee,
               active,
               created_at,
               ST_AsGeoJSON(polygon)::json AS geometry
@@ -1162,6 +1614,8 @@ app.post("/admin/zones", async (req, res, next) => {
         name: z.string().min(2),
         city: z.string().min(2).optional().or(z.literal("")),
         transportFee: z.coerce.number().min(0),
+        isSurchargeArea: z.boolean().optional(),
+        surchargeFee: z.coerce.number().min(0).optional(),
         points: z.array(z.object({ lat: z.number(), lng: z.number() })).min(3),
       })
       .parse(req.body);
@@ -1174,16 +1628,25 @@ app.post("/admin/zones", async (req, res, next) => {
 
     const wkt = `POLYGON((${closedPoints.map((point) => `${point.lng} ${point.lat}`).join(", ")}))`;
     const { rows } = await pool.query(
-      `INSERT INTO zones (name, city, transport_fee, polygon, active)
-       VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromText($4), 4326), true)
+      `INSERT INTO zones (name, city, transport_fee, polygon, active, is_surcharge_area, surcharge_fee)
+       VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromText($4), 4326), true, $5, $6)
        RETURNING id,
                  name,
                  city,
                  transport_fee,
+                 is_surcharge_area,
+                 surcharge_fee,
                  active,
                  created_at,
                  ST_AsGeoJSON(polygon)::json AS geometry`,
-      [body.name.trim(), body.city?.trim() || "Tirana", body.transportFee, wkt],
+      [
+        body.name.trim(),
+        body.city?.trim() || "Tirana",
+        body.transportFee,
+        wkt,
+        body.isSurchargeArea ?? false,
+        body.surchargeFee ?? ringSurchargeDefaultAll,
+      ],
     );
 
     io.to("admin").emit("zone.created", { zoneId: rows[0].id });
@@ -1327,22 +1790,25 @@ app.get("/public/addresses/search", async (req, res, next) => {
     }
 
     try {
-      const url = new URL("https://nominatim.openstreetmap.org/search");
-      url.searchParams.set("format", "jsonv2");
-      url.searchParams.set("addressdetails", "1");
-      url.searchParams.set("countrycodes", "al");
-      url.searchParams.set("limit", "8");
-      url.searchParams.set("q", query);
+      if (!googleMapsApiKey) {
+        res.json({ suggestions: cached });
+        return;
+      }
 
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "HappyTiranaCourierLocal/0.1 (local-dev)",
-        },
-      });
-      const places = (await response.json()) as NominatimPlace[];
-      const remote = places
-        .map(addressFromOsm)
-        .filter((item): item is AddressSuggestion => item !== null);
+      const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+      url.searchParams.set("address", query);
+      url.searchParams.set("components", "country:AL");
+      url.searchParams.set("region", "al");
+      url.searchParams.set("key", googleMapsApiKey);
+
+      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const data = (await response.json()) as {
+        results?: GoogleGeocodeResult[];
+      };
+      const remote =
+        data.results
+          ?.map(addressFromGoogleGeocode)
+          .filter((item): item is AddressSuggestion => item !== null) ?? [];
       await Promise.all(remote.map(cacheAddressSuggestion));
 
       const merged = [...remote, ...cached].filter((suggestion, index, all) => {
@@ -1371,28 +1837,32 @@ app.get("/public/addresses/reverse", async (req, res, next) => {
       })
       .parse(req.query);
 
-    try {
-      const url = new URL("https://nominatim.openstreetmap.org/reverse");
-      url.searchParams.set("format", "jsonv2");
-      url.searchParams.set("addressdetails", "1");
-      url.searchParams.set("lat", String(params.lat));
-      url.searchParams.set("lon", String(params.lng));
+    if (googleMapsApiKey) {
+      try {
+        const url = new URL(
+          "https://maps.googleapis.com/maps/api/geocode/json",
+        );
+        url.searchParams.set("latlng", `${params.lat},${params.lng}`);
+        url.searchParams.set("region", "al");
+        url.searchParams.set("key", googleMapsApiKey);
 
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "HappyTiranaCourierLocal/0.1 (local-dev)",
-        },
-      });
-      const suggestion = addressFromOsm(
-        (await response.json()) as NominatimPlace,
-      );
-      if (suggestion) {
-        await cacheAddressSuggestion(suggestion);
-        res.json({ address: suggestion });
-        return;
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(5000),
+        });
+        const data = (await response.json()) as {
+          results?: GoogleGeocodeResult[];
+        };
+        const suggestion = data.results
+          ?.map(addressFromGoogleGeocode)
+          .find((item): item is AddressSuggestion => item !== null);
+        if (suggestion) {
+          await cacheAddressSuggestion(suggestion);
+          res.json({ address: suggestion });
+          return;
+        }
+      } catch {
+        // Fall through to nearest cached address.
       }
-    } catch {
-      // Fall through to nearest cached address.
     }
 
     const { rows } = await pool.query(
@@ -1422,37 +1892,28 @@ app.get("/public/routes", async (req, res, next) => {
       })
       .parse(req.query);
 
-    try {
-      const url = new URL(
-        `https://router.project-osrm.org/route/v1/driving/${params.fromLng},${params.fromLat};${params.toLng},${params.toLat}`,
-      );
-      url.searchParams.set("overview", "full");
-      url.searchParams.set("geometries", "geojson");
-      url.searchParams.set("steps", "true");
-
-      const response = await fetch(url);
-      const data = (await response.json()) as {
-        routes?: Array<{
-          duration: number;
-          distance: number;
-          geometry: { coordinates: Array<[number, number]> };
-        }>;
-      };
-      const route = data.routes?.[0];
-
-      if (route) {
-        res.json({
-          durationSeconds: route.duration,
-          distanceMeters: route.distance,
-          coordinates: route.geometry.coordinates.map(([lng, lat]) => ({
-            lat,
-            lng,
-          })),
+    if (googleMapsApiKey) {
+      try {
+        const route = await getRouteDistanceMeters({
+          originLat: params.fromLat,
+          originLng: params.fromLng,
+          destinationLat: params.toLat,
+          destinationLng: params.toLng,
         });
-        return;
+        const coordinates = route.encodedPolyline
+          ? decodeGooglePolyline(route.encodedPolyline)
+          : [];
+        if (coordinates.length > 1) {
+          res.json({
+            durationSeconds: route.durationSeconds,
+            distanceMeters: route.distanceMeters,
+            coordinates,
+          });
+          return;
+        }
+      } catch {
+        // Fall through to the local preview below when Google is unavailable.
       }
-    } catch {
-      // A local straight fallback keeps the UI usable if OSRM is offline.
     }
 
     res.json({
@@ -1548,7 +2009,9 @@ app.post("/riders/auth/login", async (req, res, next) => {
 app.get("/riders/:id/dashboard", async (req, res, next) => {
   try {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
-    res.json(await buildRiderDashboard(params.id));
+    const dashboard = await buildRiderDashboard(params.id);
+    res.json(dashboard);
+    void runDispatchLoop();
   } catch (error) {
     next(error);
   }
@@ -1556,6 +2019,7 @@ app.get("/riders/:id/dashboard", async (req, res, next) => {
 
 app.post("/riders/:id/availability", async (req, res, next) => {
   const client = await pool.connect();
+  let committed = false;
 
   try {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
@@ -1599,14 +2063,16 @@ app.post("/riders/:id/availability", async (req, res, next) => {
           lng: body.lng,
         });
       }
-
-      await refreshOffersForRider(client, params.id);
     }
 
     await client.query("COMMIT");
-    res.json(await buildRiderDashboard(params.id));
+    committed = true;
+
+    const dashboard = await buildRiderDashboard(params.id);
+    res.json(dashboard);
+    if (body.isOnline) void runDispatchLoop();
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (!committed) await client.query("ROLLBACK").catch(() => undefined);
     next(error);
   } finally {
     client.release();
@@ -1998,6 +2464,15 @@ app.get("/businesses/:id/dashboard", async (req, res, next) => {
               o.total_amount,
               o.rider_earning,
               o.platform_commission,
+              o.ready_minutes,
+              o.route_distance_meters,
+              o.route_distance_source,
+              o.route_preference,
+              o.google_maps_url,
+              o.calculated_transport_fee,
+              o.transport_fee_overridden,
+              o.ring_surcharge_applied,
+              o.ring_surcharge_fee,
               o.created_at,
               c.name AS customer_name,
               c.phone AS customer_phone,
@@ -2064,6 +2539,61 @@ app.get("/businesses/:id/dashboard", async (req, res, next) => {
   }
 });
 
+app.post("/businesses/:id/orders/quote", async (req, res, next) => {
+  const client = await pool.connect();
+
+  try {
+    const params = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        addressText: z.string().optional().or(z.literal("")),
+        lat: z.coerce.number().optional(),
+        lng: z.coerce.number().optional(),
+        googleMapsUrl: z.string().optional().or(z.literal("")),
+        transportFeeOverride: z.coerce.number().min(0).optional(),
+      })
+      .parse(req.body);
+
+    const mapsLocation = await resolveGoogleMapsLink(body.googleMapsUrl);
+    const textLocation =
+      !mapsLocation &&
+      (!Number.isFinite(body.lat) || !Number.isFinite(body.lng))
+        ? await resolveAddressTextLocation(body.addressText)
+        : null;
+    const deliveryLat = mapsLocation?.lat ?? body.lat ?? textLocation?.lat;
+    const deliveryLng = mapsLocation?.lng ?? body.lng ?? textLocation?.lng;
+
+    if (!Number.isFinite(deliveryLat) || !Number.isFinite(deliveryLng)) {
+      res.status(422).json({ error: "DELIVERY_LOCATION_NOT_RESOLVED" });
+      return;
+    }
+
+    const quote = await calculateBusinessTransportQuote(client, {
+      businessId: params.id,
+      lat: deliveryLat as number,
+      lng: deliveryLng as number,
+      googleMapsUrl: mapsLocation?.resolvedUrl ?? body.googleMapsUrl,
+      transportFeeOverride: body.transportFeeOverride,
+    });
+
+    res.json({
+      quote: {
+        ...quote,
+        lat: deliveryLat,
+        lng: deliveryLng,
+        addressText:
+          body.addressText?.trim() ||
+          textLocation?.details ||
+          (mapsLocation ? "Destinacion nga Google Maps" : ""),
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 app.post("/businesses/:id/orders", async (req, res, next) => {
   const client = await pool.connect();
 
@@ -2073,9 +2603,12 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
       .object({
         customerName: z.string().min(2),
         customerPhone: z.string().min(6),
-        addressText: z.string().min(5),
-        lat: z.coerce.number(),
-        lng: z.coerce.number(),
+        addressText: z.string().optional().or(z.literal("")),
+        lat: z.coerce.number().optional(),
+        lng: z.coerce.number().optional(),
+        googleMapsUrl: z.string().optional().or(z.literal("")),
+        readyMinutes: z.coerce.number().int().min(0).max(180).optional(),
+        transportFeeOverride: z.coerce.number().min(0).optional(),
         productDescription: z.string().min(2).optional(),
         productValue: z.coerce.number().min(0).optional(),
         items: z
@@ -2090,35 +2623,45 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
       .refine(
         (value) =>
           Boolean(value.items?.length) ||
-          (Boolean(value.productDescription) && value.productValue !== undefined),
+          (Boolean(value.productDescription) &&
+            value.productValue !== undefined),
         {
           message: "ORDER_PRODUCTS_REQUIRED",
         },
       )
       .parse(req.body);
 
+    const mapsLocation = await resolveGoogleMapsLink(body.googleMapsUrl);
+    const textLocation =
+      !mapsLocation &&
+      (!Number.isFinite(body.lat) || !Number.isFinite(body.lng))
+        ? await resolveAddressTextLocation(body.addressText)
+        : null;
+    const deliveryLat = mapsLocation?.lat ?? body.lat ?? textLocation?.lat;
+    const deliveryLng = mapsLocation?.lng ?? body.lng ?? textLocation?.lng;
+    const addressText =
+      body.addressText?.trim() ||
+      textLocation?.details ||
+      (mapsLocation ? "Destinacion nga Google Maps" : "");
+
+    if (
+      !addressText ||
+      !Number.isFinite(deliveryLat) ||
+      !Number.isFinite(deliveryLng)
+    ) {
+      res.status(422).json({ error: "DELIVERY_ADDRESS_REQUIRED" });
+      return;
+    }
+
     await client.query("BEGIN");
 
-    const business = await client.query(
-      "SELECT id FROM businesses WHERE id = $1 AND status = 'ACTIVE'",
-      [params.id],
-    );
-    if (!business.rows[0]) {
-      await client.query("ROLLBACK");
-      res.status(404).json({ error: "BUSINESS_NOT_FOUND" });
-      return;
-    }
-
-    const zoneResult = await client.query(
-      "SELECT * FROM resolve_zone_for_point($1, $2)",
-      [body.lat, body.lng],
-    );
-    const zone = zoneResult.rows[0];
-    if (!zone) {
-      await client.query("ROLLBACK");
-      res.status(422).json({ error: "DELIVERY_ZONE_NOT_FOUND" });
-      return;
-    }
+    const quote = await calculateBusinessTransportQuote(client, {
+      businessId: params.id,
+      lat: deliveryLat as number,
+      lng: deliveryLng as number,
+      googleMapsUrl: mapsLocation?.resolvedUrl ?? body.googleMapsUrl,
+      transportFeeOverride: body.transportFeeOverride,
+    });
 
     const productIds = body.items?.map((item) => item.productId) ?? [];
     const productResult = productIds.length
@@ -2154,11 +2697,14 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
             return `${item.quantity}x ${product.name}`;
           })
           .join(", ")
-      : body.productDescription?.trim() ?? "Porosi biznesi";
-    const transportFee = Number(zone.transport_fee);
+      : (body.productDescription?.trim() ?? "Porosi biznesi");
+    const transportFee = quote.finalTransportFee;
     const platformCommission = Number((transportFee * 0.2).toFixed(2));
     const riderEarning = Number((transportFee - platformCommission).toFixed(2));
     const totalAmount = productValue + transportFee;
+    const readyMinutes = body.readyMinutes ?? 10;
+    const notificationDelayMinutes = Math.max(readyMinutes - 1, 0);
+    const offerAfter = new Date(Date.now() + notificationDelayMinutes * 60_000);
 
     const customerResult = await client.query(
       `INSERT INTO customers (name, phone)
@@ -2173,10 +2719,10 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
        RETURNING id`,
       [
         customerResult.rows[0].id,
-        zone.zone_id,
-        body.addressText.trim(),
-        body.lat,
-        body.lng,
+        quote.zoneId,
+        addressText,
+        deliveryLat,
+        deliveryLng,
       ],
     );
 
@@ -2193,24 +2739,46 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
         total_amount,
         platform_commission,
         rider_earning,
-        status
+        status,
+        ready_minutes,
+        offer_after,
+        route_distance_meters,
+        route_distance_source,
+        route_preference,
+        google_maps_url,
+        calculated_transport_fee,
+        transport_fee_overridden,
+        ring_surcharge_applied,
+        ring_surcharge_fee,
+        offer_scope
       )
       VALUES (
         'HTC-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)),
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'CREATED'
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'CREATED',
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'PENDING'
       )
       RETURNING *`,
       [
         params.id,
         customerResult.rows[0].id,
         addressResult.rows[0].id,
-        zone.zone_id,
+        quote.zoneId,
         productDescription,
         productValue,
         transportFee,
         totalAmount,
         platformCommission,
         riderEarning,
+        readyMinutes,
+        offerAfter,
+        quote.distanceMeters,
+        quote.distanceSource,
+        quote.routePreference,
+        quote.googleMapsUrl,
+        quote.calculatedTransportFee,
+        quote.transportFeeOverridden,
+        quote.ringSurchargeApplied,
+        quote.ringSurchargeFee,
       ],
     );
 
@@ -2236,16 +2804,27 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
       [orderResult.rows[0].id],
     );
 
-    const offeredRiders = await offerBusinessOrderToNearestRiders(
-      client,
-      orderResult.rows[0].id,
+    const offeredRiders =
+      notificationDelayMinutes === 0
+        ? await offerBusinessOrderToEligibleRiders(
+            client,
+            orderResult.rows[0].id,
+            "NEARBY",
+          )
+        : [];
+
+    await client.query(
+      "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', $2, $3)",
+      [
+        orderResult.rows[0].id,
+        offeredRiders.length > 0 ? "OFFERED" : "CREATED",
+        notificationDelayMinutes > 0
+          ? `Rider notification scheduled ${notificationDelayMinutes} minutes after order creation`
+          : offeredRiders.length > 0
+            ? "Offered to online riders within 1km"
+            : "No eligible rider found within 1km",
+      ],
     );
-    if (offeredRiders.length > 0) {
-      await client.query(
-        "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', 'Offered to nearest online riders')",
-        [orderResult.rows[0].id],
-      );
-    }
 
     await client.query("COMMIT");
 
@@ -2261,19 +2840,24 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
         orderId: orderResult.rows[0].id,
         riderIds: offeredRiders.map((rider) => rider.id),
         expiresAt: new Date(
-          Date.now() + orderOfferTtlMinutes * 60 * 1000,
+          Date.now() + offerEscalationSeconds * 1000,
         ).toISOString(),
       });
       for (const rider of offeredRiders) {
         io.to(`rider:${rider.id}`).emit("order.offered", {
           orderId: orderResult.rows[0].id,
-          message: "Ke nje porosi te re afer teje.",
+          message: "Ke nje porosi te re brenda 1km.",
           distanceMeters: rider.distanceMeters,
         });
       }
     }
 
-    res.status(201).json({ order, offeredRiders });
+    res.status(201).json({
+      order,
+      offeredRiders,
+      dispatchScheduledFor: offerAfter.toISOString(),
+      quote,
+    });
   } catch (error) {
     await client.query("ROLLBACK");
     next(error);
@@ -2604,9 +3188,10 @@ app.patch(
           [params.orderId, order.status],
         );
       } else if (order.status === "CREATED") {
-        const offeredRiders = await offerBusinessOrderToNearestRiders(
+        const offeredRiders = await offerBusinessOrderToEligibleRiders(
           client,
           params.orderId,
+          "NEARBY",
         );
         await client.query(
           "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', 'Confirmed by business')",
@@ -2616,13 +3201,13 @@ app.patch(
           orderId: params.orderId,
           riderIds: offeredRiders.map((rider) => rider.id),
           expiresAt: new Date(
-            Date.now() + orderOfferTtlMinutes * 60 * 1000,
+            Date.now() + offerEscalationSeconds * 1000,
           ).toISOString(),
         });
         for (const rider of offeredRiders)
           io.to(`rider:${rider.id}`).emit("order.offered", {
             orderId: params.orderId,
-            message: "Ke nje porosi te re afer teje.",
+            message: "Ke nje porosi te re brenda 1km.",
             distanceMeters: rider.distanceMeters,
           });
       }
@@ -2936,9 +3521,10 @@ app.post("/public/orders", async (req, res, next) => {
       );
     }
 
-    const offeredRiders = await offerBusinessOrderToNearestRiders(
+    const offeredRiders = await offerBusinessOrderToEligibleRiders(
       client,
       orderResult.rows[0].id,
+      "NEARBY",
     );
     if (offeredRiders.length > 0) {
       await client.query(
@@ -2968,13 +3554,13 @@ app.post("/public/orders", async (req, res, next) => {
         orderId: orderResult.rows[0].id,
         riderIds: offeredRiders.map((rider) => rider.id),
         expiresAt: new Date(
-          Date.now() + orderOfferTtlMinutes * 60 * 1000,
+          Date.now() + offerEscalationSeconds * 1000,
         ).toISOString(),
       });
       for (const rider of offeredRiders) {
         io.to(`rider:${rider.id}`).emit("order.offered", {
           orderId: orderResult.rows[0].id,
-          message: "Ke nje porosi te re afer teje.",
+          message: "Ke nje porosi te re brenda 1km.",
           distanceMeters: rider.distanceMeters,
         });
       }
@@ -3085,6 +3671,24 @@ app.post("/zones/resolve", async (req, res, next) => {
   }
 });
 
+app.post("/riders/:id/itinerary", async (req, res, next) => {
+  try {
+    const {id} = z.object({id:z.string().uuid()}).parse(req.params);
+    if(req.header("x-rider-id") !== id) {
+      res.status(403).json({error:"RIDER_NOT_AUTHORIZED"}); return;
+    }
+    const origin = z.object({lat:z.number().min(-90).max(90),lng:z.number().min(-180).max(180)}).parse(req.body);
+    const dashboard = await buildRiderDashboard(id);
+    const orders = dashboard.activeOrders.map(order => ({
+      id:String(order.id),code:String(order.code),status:String(order.status),businessName:String(order.businessName),
+      pickupAddress:String(order.pickupAddress),pickupLat:order.pickupLat,pickupLng:order.pickupLng,
+      dropoffAddress:String(order.dropoffAddress),dropoffLat:order.dropoffLat,dropoffLng:order.dropoffLng,
+    }));
+    const route = await buildItinerary(googleMapsApiKey, origin, orders);
+    res.json({...route,coordinates:route.encodedPolyline ? decodeGooglePolyline(route.encodedPolyline) : []});
+  } catch(error) { next(error); }
+});
+
 app.post("/orders/:id/accept", async (req, res, next) => {
   const client = await pool.connect();
 
@@ -3092,7 +3696,19 @@ app.post("/orders/:id/accept", async (req, res, next) => {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ riderId: z.string().uuid() }).parse(req.body);
     const rider = await client.query(
-      "SELECT is_online FROM rider_profiles WHERE id = $1 AND status = 'ACTIVE'",
+      `SELECT rp.is_online,
+              rp.debit_limit_all,
+              COALESCE(debt.platform_due, 0)::numeric AS platform_due
+       FROM rider_profiles rp
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(le.amount), 0)::numeric AS platform_due
+         FROM ledger_entries le
+         WHERE le.rider_id = rp.id
+           AND le.direction = 'RIDER_OWES_PLATFORM'
+           AND le.status = 'OPEN'
+       ) debt ON true
+       WHERE rp.id = $1
+         AND rp.status = 'ACTIVE'`,
       [body.riderId],
     );
 
@@ -3100,8 +3716,26 @@ app.post("/orders/:id/accept", async (req, res, next) => {
       res.status(403).json({ error: "RIDER_MUST_BE_ONLINE_TO_ACCEPT" });
       return;
     }
+    if (
+      Number(rider.rows[0].platform_due) >=
+      Number(rider.rows[0].debit_limit_all)
+    ) {
+      await createAdminNotification(client, {
+        type: "RIDER_DEBIT_LIMIT_REACHED",
+        payload: {
+          riderId: body.riderId,
+          platformDue: Number(rider.rows[0].platform_due),
+          debitLimitAll: Number(rider.rows[0].debit_limit_all),
+        },
+      });
+      res.status(403).json({ error: "RIDER_DEBIT_LIMIT_REACHED" });
+      return;
+    }
 
     await client.query("BEGIN");
+    await client.query("SELECT id FROM rider_profiles WHERE id = $1 FOR UPDATE", [body.riderId]);
+    const capacity = await client.query("SELECT COUNT(*)::int AS count FROM orders WHERE assigned_rider_id = $1 AND status IN ('ACCEPTED', 'PICKED_UP')", [body.riderId]);
+    if (capacity.rows[0].count >= 4) throw new Error("RIDER_ORDER_CAPACITY_REACHED");
     const { rows } = await client.query(
       "SELECT * FROM accept_order_atomic($1, $2)",
       [params.id, body.riderId],
@@ -3226,6 +3860,45 @@ app.patch("/riders/orders/:id/status", async (req, res, next) => {
           order.platform_commission,
         ],
       );
+
+      const debt = await client.query(
+        `SELECT rp.debit_limit_all,
+                COALESCE(SUM(le.amount), 0)::numeric AS platform_due
+         FROM rider_profiles rp
+         LEFT JOIN ledger_entries le ON le.rider_id = rp.id
+          AND le.direction = 'RIDER_OWES_PLATFORM'
+          AND le.status = 'OPEN'
+         WHERE rp.id = $1
+         GROUP BY rp.id`,
+        [body.riderId],
+      );
+      if (
+        debt.rows[0] &&
+        Number(debt.rows[0].platform_due) >=
+          Number(debt.rows[0].debit_limit_all)
+      ) {
+        await createAdminNotification(client, {
+          type: "RIDER_DEBIT_LIMIT_REACHED",
+          payload: {
+            riderId: body.riderId,
+            platformDue: Number(debt.rows[0].platform_due),
+            debitLimitAll: Number(debt.rows[0].debit_limit_all),
+          },
+        });
+        await client.query(
+          `INSERT INTO notifications (user_id, type, channel, status, payload, sent_at)
+           SELECT user_id, 'RIDER_DEBIT_BLOCKED', 'SOCKET', 'SENT', $2::jsonb, now()
+           FROM rider_profiles
+           WHERE id = $1`,
+          [
+            body.riderId,
+            JSON.stringify({
+              message:
+                "Ke arritur limitin 10,000 ALL. Porosite e reja bllokohen deri ne shlyerje.",
+            }),
+          ],
+        );
+      }
     }
 
     await client.query("COMMIT");
@@ -3339,12 +4012,40 @@ app.use(
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
     const status = message.includes("NOT_FOUND")
       ? 404
+      : message === "GOOGLE_DIRECTIONS_API_KEY_REQUIRED"
+        ? 503
+        : message.startsWith("GOOGLE_DIRECTIONS_")
+          ? 502
       : message.includes("NOT_AVAILABLE")
         ? 409
         : 400;
     res.status(status).json({ error: message });
   },
 );
+
+let dispatchLoopRunning = false;
+
+async function runDispatchLoop() {
+  if (dispatchLoopRunning) return;
+  dispatchLoopRunning = true;
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await processDueOrderDispatches(client);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    console.error("Happy Tirana dispatch loop failed", error);
+  } finally {
+    client.release();
+    dispatchLoopRunning = false;
+  }
+}
+
+setInterval(() => {
+  void runDispatchLoop();
+}, 30_000);
 
 const port = Number(process.env.PORT ?? 4000);
 server.listen(port, () => {

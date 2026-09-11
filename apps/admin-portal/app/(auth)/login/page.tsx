@@ -3,8 +3,9 @@
 import { ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
-import { loginAdmin } from "../../../lib/api";
+import { FormEvent, useEffect, useState } from "react";
+import { ApiError, loginAdmin } from "../../../lib/api";
+import { getAdminSession } from "../../../lib/admin-session";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,6 +13,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (getAdminSession()) router.replace("/");
+  }, [router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -21,8 +26,12 @@ export default function LoginPage() {
     try {
       await loginAdmin({ email, password });
       router.replace("/");
-    } catch {
-      setMessage("Login nuk u krye. Kontrollo kredencialet ose API/Postgres.");
+    } catch (error) {
+      setMessage(
+        error instanceof ApiError && error.code === "ADMIN_API_TIMEOUT"
+          ? "Kërkesa po zgjat më shumë se zakonisht. Provo përsëri pas pak."
+          : "Hyrja nuk u krye. Kontrollo kredencialet dhe provo përsëri.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -61,7 +70,7 @@ export default function LoginPage() {
           <div className="grid h-12 w-12 place-items-center rounded-xl bg-happy-orange/15 text-happy-orange">
             <ShieldCheck className="h-6 w-6" />
           </div>
-          <h1 className="type-screen-title mt-4">Admin Login</h1>
+          <h1 className="type-screen-title mt-4">Hyrja e administratorit</h1>
           <p className="type-body mt-2 text-white/58">
             Hyr per te menaxhuar platformen Happy Tirana Courier.
           </p>
@@ -69,10 +78,10 @@ export default function LoginPage() {
           <div className="mt-6 grid gap-4">
             <label className="type-input block">
               Email
-              <span className="admin-input mt-2 flex h-12 items-center rounded-xl border px-3">
+              <span className="admin-input mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <Mail className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none"
+                  className="w-full bg-transparent outline-none focus:outline-none"
                   onChange={(event) => setEmail(event.target.value)}
                   required
                   type="email"
@@ -82,10 +91,10 @@ export default function LoginPage() {
             </label>
             <label className="type-input block">
               Fjalekalimi
-              <span className="admin-input mt-2 flex h-12 items-center rounded-xl border px-3">
+              <span className="admin-input mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <LockKeyhole className="mr-3 h-5 w-5 text-happy-orange" />
                 <input
-                  className="w-full bg-transparent outline-none"
+                  className="w-full bg-transparent outline-none focus:outline-none"
                   onChange={(event) => setPassword(event.target.value)}
                   required
                   type="password"

@@ -6,16 +6,20 @@ import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/700.css";
 import "@fontsource/manrope/800.css";
 import "./globals.css";
+import "../../shared/operations.css";
+import "../../shared/forms.css";
 
 export const metadata: Metadata = {
   title: "Happy Tirana Courier Business",
-  description: "Business portal for creating and tracking courier orders"
+  description: "Business portal for creating and tracking courier orders",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="sq">
-      <body className="font-sans">{children}</body>
+      <body className="font-sans" suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }

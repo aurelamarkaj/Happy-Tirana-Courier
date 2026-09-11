@@ -1,0 +1,95 @@
+"use client";
+
+declare global {
+  interface Window {
+    google?: any;
+    happyGoogleMapsReady?: Promise<any>;
+    happyGoogleMapsLoaded?: () => void;
+    gm_authFailure?: () => void;
+  }
+}
+
+const googleMapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+
+export function hasGoogleMapsKey() {
+  return Boolean(
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_ENABLED !== "false" &&
+      googleMapsApiKey &&
+      !googleMapsApiKey.includes("replace-with"),
+  );
+}
+
+export function loadGoogleMaps() {
+  if (typeof window === "undefined") return Promise.reject(new Error("NO_WINDOW"));
+  if (!hasGoogleMapsKey()) return Promise.reject(new Error("GOOGLE_MAPS_API_KEY_MISSING"));
+  if (window.google?.maps?.Map) return Promise.resolve(window.google);
+  if (window.happyGoogleMapsReady) return window.happyGoogleMapsReady;
+
+  window.happyGoogleMapsReady = new Promise((resolve, reject) => {
+    let authFailed = false;
+    window.gm_authFailure = () => {
+      authFailed = true;
+      reject(new Error("GOOGLE_MAPS_AUTH_FAILED"));
+    };
+    window.happyGoogleMapsLoaded = () => {
+      window.setTimeout(() => {
+        if (authFailed || !window.google?.maps?.Map)
+          reject(new Error("GOOGLE_MAPS_LOAD_FAILED"));
+        else resolve(window.google);
+      }, 500);
+    };
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src*="maps.googleapis.com/maps/api/js"]',
+    );
+    if (existing) {
+      existing.addEventListener("load", () => {
+        if (window.google?.maps?.Map) resolve(window.google);
+      });
+      existing.addEventListener("error", () => reject(new Error("GOOGLE_MAPS_LOAD_FAILED")));
+      return;
+    }
+
+    const script = document.createElement("script");
+    const params = new URLSearchParams({
+      key: googleMapsApiKey,
+      loading: "async",
+      callback: "happyGoogleMapsLoaded",
+      libraries: "geometry",
+      v: "weekly",
+    });
+    script.src = `https://maps.googleapis.com/maps/api/js?${params}`;
+    script.async = true;
+    script.defer = true;
+    script.onerror = () => reject(new Error("GOOGLE_MAPS_LOAD_FAILED"));
+    document.head.appendChild(script);
+  });
+
+  return window.happyGoogleMapsReady;
+}
+
+export function createHappyMarker(
+  map: any,
+  position: { lat: number; lng: number },
+  label: string,
+  className: string,
+) {
+  return new window.google.maps.Marker({
+    map,
+    position,
+    label: {
+      text: label,
+      color: "#ffffff",
+      fontSize: "12px",
+      fontWeight: "800",
+    },
+    icon: {
+      path: window.google.maps.SymbolPath.CIRCLE,
+      scale: className.includes("rider") ? 18 : 12,
+      fillColor: className.includes("online") ? "#FF5500" : "#101010",
+      fillOpacity: 1,
+      strokeColor: "#ffffff",
+      strokeOpacity: 0.9,
+      strokeWeight: 2,
+    },
+  });
+}

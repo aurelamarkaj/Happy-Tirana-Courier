@@ -24,6 +24,18 @@ No login credentials are committed to source control. Set `ADMIN_EMAIL`,
 `ADMIN_PHONE`, and `ADMIN_PASSWORD` in your local `.env` before running
 `npm run db:create-admin`.
 
+New installations start with no demo businesses, products, riders or orders.
+Create the administrator with `db:create-admin`, then add actual accounts from
+the dashboard. The base service area, address suggestions and business category
+options remain available.
+
+For the reviewed development dataset only, the manual script
+`packages/db/maintenance/clear-test-data.sql` removes known test accounts and
+their related data while preserving administrators and operational settings.
+It is not part of migrations and refuses to run if unreviewed business or
+non-admin accounts are present. Back up the database before explicitly running
+it with `docker compose exec -T postgres psql -U happy -d happy_tirana < packages/db/maintenance/clear-test-data.sql`.
+
 Default ports:
 
 - API: `http://localhost:4000`
@@ -64,3 +76,13 @@ Active portal routes:
 - Rider GPS should be accepted only when the rider is online or has an active order.
 - Order acceptance uses a transaction with `FOR UPDATE` so the first rider to accept wins.
 - For each delivered order, the rider keeps 80% of transport and the platform receives 20%.
+
+## Maps and rider navigation
+
+Set `GOOGLE_MAPS_API_KEY` in the root `.env` for the server, with Routes API enabled and an IP restriction for the server's public address. Transport quotes use the shortest returned driving alternative without traffic: 300 ALL through 3 km, then 0.1 ALL per additional meter, plus applicable zone surcharges.
+
+Set `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in each portal's `.env.local` for the embedded map. Use a separate browser key with Maps JavaScript API enabled and the portal origins allowed under website restrictions. These local environment files are ignored by Git.
+
+Riders may hold up to four active orders. The delivery page lists every active order and plans up to eight stops from the rider's GPS position. Google Routes road distances are used to minimize total distance across the remaining stops, preserving pickup-before-delivery for each order. Picked-up orders require only a delivery stop. The itinerary refreshes after an order/status change or movement of roughly 50 m, at most every 30 seconds for GPS movement. The navigation button opens Google Maps for the next stop; after pickup/delivery is confirmed in the portal, the remaining itinerary is recalculated. Live GPS is required to plan from the rider's current location.
+
+Planner regression checks: `node --test tests/rider-itinerary.test.cjs`.
