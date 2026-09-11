@@ -70,7 +70,7 @@ export default function RidersPage() {
       setRiders(data.riders);
       setMessage("");
     } catch {
-      setMessage("Nuk u lexuan motoristet nga databaza lokale.");
+      setMessage("Nuk u lexuan motoristet Përditësim i porosisë.");
     } finally {
       setLoading(false);
     }
@@ -115,7 +115,7 @@ export default function RidersPage() {
       );
     } catch {
       setMessage(
-        "Krijimi i motoristit deshtoi. Kontrollo telefonin/email-in ose Postgres.",
+        "Motoristi nuk u regjistrua. Kontrollo të dhënat dhe provo përsëri.",
       );
     } finally {
       setSaving(false);
@@ -209,7 +209,7 @@ export default function RidersPage() {
                 onChange={(event) =>
                   setForm({ ...form, email: event.target.value })
                 }
-                placeholder="motorist@example.local"
+                placeholder="motorist@example.com"
                 type="email"
                 value={form.email}
               />

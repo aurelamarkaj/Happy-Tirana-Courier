@@ -8,6 +8,8 @@ import express from "express";
 import helmet from "helmet";
 import { Server } from "socket.io";
 import { z } from "zod";
+import { getGoogleRoadRoute, type RouteInput } from "./google-routes.js";
+import { buildItinerary } from "./rider-itinerary.js";
 
 dotenv.config({
   path: fileURLToPath(new URL("../../../.env", import.meta.url)),
@@ -35,7 +37,12 @@ const sampleBusinessIds = [
 ];
 const io = new Server(server, {
   cors: {
-    origin: [/^http:\/\/localhost:300\d$/, /^http:\/\/127\.0\.0\.1:300\d$/],
+    origin: [
+      /^http:\/\/localhost:30\d\d$/,
+      /^http:\/\/localhost:31\d\d$/,
+      /^http:\/\/127\.0\.0\.1:30\d\d$/,
+      /^http:\/\/127\.0\.0\.1:31\d\d$/,
+    ],
     credentials: true,
   },
 });
@@ -59,7 +66,12 @@ const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim() ?? "";
 app.use(helmet());
 app.use(
   cors({
-    origin: [/^http:\/\/localhost:300\d$/, /^http:\/\/127\.0\.0\.1:300\d$/],
+    origin: [
+      /^http:\/\/localhost:30\d\d$/,
+      /^http:\/\/localhost:31\d\d$/,
+      /^http:\/\/127\.0\.0\.1:30\d\d$/,
+      /^http:\/\/127\.0\.0\.1:31\d\d$/,
+    ],
     credentials: true,
   }),
 );
@@ -117,12 +129,6 @@ function numericOrUndefined(value: unknown) {
 
 function roundMoney(value: number) {
   return Number(value.toFixed(2));
-}
-
-function hasGoogleDirectionsKey() {
-  return Boolean(
-    googleMapsApiKey && !googleMapsApiKey.toLowerCase().includes("replace-with"),
-  );
 }
 
 function parseLatLngFromText(value: string) {
@@ -204,60 +210,8 @@ async function resolveGoogleMapsLink(googleMapsUrl?: string | null) {
   }
 }
 
-async function getRouteDistanceMeters(input: {
-  originLat: number;
-  originLng: number;
-  destinationLat: number;
-  destinationLng: number;
-}) {
-  if (!hasGoogleDirectionsKey()) {
-    throw new Error("GOOGLE_DIRECTIONS_API_KEY_REQUIRED");
-  }
-
-  try {
-    const url = new URL("https://maps.googleapis.com/maps/api/directions/json");
-    url.searchParams.set("origin", `${input.originLat},${input.originLng}`);
-    url.searchParams.set(
-      "destination",
-      `${input.destinationLat},${input.destinationLng}`,
-    );
-    url.searchParams.set("mode", "driving");
-    url.searchParams.set("alternatives", "true");
-    url.searchParams.set("units", "metric");
-    url.searchParams.set("region", "al");
-    url.searchParams.set("key", googleMapsApiKey);
-
-    const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
-    if (!response.ok) throw new Error("GOOGLE_DIRECTIONS_REQUEST_FAILED");
-
-    const data = (await response.json()) as {
-      status?: string;
-      routes?: Array<{ legs?: Array<{ distance?: { value?: number } }> }>;
-    };
-    if (data.status && data.status !== "OK") {
-      throw new Error(`GOOGLE_DIRECTIONS_${data.status}`);
-    }
-
-    const distances =
-      data.routes
-        ?.map((route) => route.legs?.[0]?.distance?.value)
-        .filter((distance): distance is number => Number.isFinite(distance)) ??
-      [];
-    if (!distances.length) throw new Error("GOOGLE_DIRECTIONS_ROUTE_NOT_FOUND");
-
-    return {
-      distanceMeters: Math.round(Math.min(...distances)),
-      source: "GOOGLE_DIRECTIONS_SHORTEST_ROAD_IGNORE_TRAFFIC",
-    };
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.startsWith("GOOGLE_DIRECTIONS_")
-    ) {
-      throw error;
-    }
-    throw new Error("GOOGLE_DIRECTIONS_REQUEST_FAILED");
-  }
+async function getRouteDistanceMeters(input: RouteInput) {
+  return getGoogleRoadRoute(googleMapsApiKey, input);
 }
 
 async function calculateBusinessTransportQuote(
@@ -747,44 +701,42 @@ async function offerBusinessOrderToEligibleRiders(
        AND rp.status = 'ACTIVE'
        AND u.status = 'ACTIVE'
        AND COALESCE(debt.platform_due, 0) < rp.debit_limit_all
-       AND NOT EXISTS (
-         SELECT 1
-         FROM orders active_order
+       AND (
+         (SELECT route_distance_meters FROM order_context) > $5
+         OR rp.vehicle_type = 'MOTORBIKE'
+       )
+       AND (
+         SELECT COUNT(*) FROM orders active_order
          WHERE active_order.assigned_rider_id = rp.id
            AND active_order.status IN ('ACCEPTED', 'PICKED_UP')
-       )
+       ) < 4
        AND NOT EXISTS (
          SELECT 1
          FROM order_offers existing
          WHERE existing.order_id = $1
            AND existing.rider_id = rp.id
+           AND existing.status = 'PENDING'
        )
        AND (
-         ((SELECT route_distance_meters FROM order_context) > $3 AND rp.vehicle_type = 'DIESEL')
-         OR ((SELECT route_distance_meters FROM order_context) <= $3 AND rp.vehicle_type = 'MOTORBIKE')
-       )
-       AND (
-         $4::text = 'ALL'
+         $3::text = 'ALL'
          OR (
            latest.point IS NOT NULL
            AND ST_Distance(
              latest.point,
              ST_SetSRID(ST_MakePoint((SELECT lng FROM order_context), (SELECT lat FROM order_context)), 4326)::geography
-           ) <= $5
+           ) <= $4
          )
        )
      ORDER BY distance_meters ASC NULLS LAST, rp.last_seen_at DESC NULLS LAST
-     LIMIT CASE WHEN $4::text = 'NEARBY' THEN $2 ELSE 500 END`,
+     LIMIT CASE WHEN $3::text = 'NEARBY' THEN $2 ELSE 500 END`,
     [
       orderId,
       nearbyRiderOfferLimit,
-      longDistanceThresholdMeters,
       scope,
       nearbyRiderRadiusMeters,
+      longDistanceThresholdMeters,
     ],
   );
-
-  if (riders.rows.length === 0) return [];
 
   await client.query(
     `UPDATE orders
@@ -887,12 +839,15 @@ async function processDueOrderDispatches(client: PoolClient) {
       order.id,
       "NEARBY",
     );
-    if (riders.length > 0) {
-      await client.query(
-        "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', 'Offered to riders within 1km')",
-        [order.id],
-      );
-    }
+    await client.query(
+      "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', 'OFFERED', $2)",
+      [
+        order.id,
+        riders.length > 0
+          ? "Offered to riders within 1km of the business"
+          : "Waiting 60 seconds before opening to all eligible riders",
+      ],
+    );
   }
 
   const dueEscalation = await client.query(
@@ -1094,8 +1049,7 @@ async function buildRiderDashboard(riderId: string) {
     `${orderSelect}
      WHERE o.assigned_rider_id = $1
        AND o.status IN ('ACCEPTED', 'PICKED_UP')
-     ORDER BY o.accepted_at DESC
-     LIMIT 1`,
+     ORDER BY o.accepted_at ASC, o.id ASC`,
     [riderId],
   );
 
@@ -1143,6 +1097,7 @@ async function buildRiderDashboard(riderId: string) {
 
   return {
     rider: mapRiderProfile(rider.rows[0]),
+    activeOrders: activeOrder.rows.map(mapRiderOrder),
     activeOrder: activeOrder.rows[0]
       ? mapRiderOrder(activeOrder.rows[0])
       : null,
@@ -1935,57 +1890,20 @@ app.get("/public/routes", async (req, res, next) => {
 
     if (googleMapsApiKey) {
       try {
-        const url = new URL(
-          "https://maps.googleapis.com/maps/api/directions/json",
-        );
-        url.searchParams.set("origin", `${params.fromLat},${params.fromLng}`);
-        url.searchParams.set("destination", `${params.toLat},${params.toLng}`);
-        url.searchParams.set("mode", "driving");
-        url.searchParams.set("alternatives", "true");
-        url.searchParams.set("key", googleMapsApiKey);
-
-        const response = await fetch(url, {
-          signal: AbortSignal.timeout(6000),
+        const route = await getRouteDistanceMeters({
+          originLat: params.fromLat,
+          originLng: params.fromLng,
+          destinationLat: params.toLat,
+          destinationLng: params.toLng,
         });
-        const data = (await response.json()) as {
-          routes?: Array<{
-            overview_polyline?: { points?: string };
-            legs?: Array<{
-              distance?: { value?: number };
-              duration?: { value?: number };
-            }>;
-          }>;
-        };
-        const routes =
-          data.routes
-            ?.map((route) => ({
-              coordinates: route.overview_polyline?.points
-                ? decodeGooglePolyline(route.overview_polyline.points)
-                : [],
-              distanceMeters: route.legs?.[0]?.distance?.value,
-              durationSeconds: route.legs?.[0]?.duration?.value,
-            }))
-            .filter(
-              (route) =>
-                Number.isFinite(route.distanceMeters) &&
-                Number.isFinite(route.durationSeconds),
-            ) ?? [];
-        const route = routes.sort(
-          (left, right) =>
-            Number(left.distanceMeters) - Number(right.distanceMeters),
-        )[0];
-
-        if (route) {
+        const coordinates = route.encodedPolyline
+          ? decodeGooglePolyline(route.encodedPolyline)
+          : [];
+        if (coordinates.length > 1) {
           res.json({
-            durationSeconds: Number(route.durationSeconds),
-            distanceMeters: Number(route.distanceMeters),
-            coordinates:
-              route.coordinates.length > 1
-                ? route.coordinates
-                : [
-                    { lat: params.fromLat, lng: params.fromLng },
-                    { lat: params.toLat, lng: params.toLng },
-                  ],
+            durationSeconds: route.durationSeconds,
+            distanceMeters: route.distanceMeters,
+            coordinates,
           });
           return;
         }
@@ -2781,7 +2699,7 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
     const riderEarning = Number((transportFee - platformCommission).toFixed(2));
     const totalAmount = productValue + transportFee;
     const readyMinutes = body.readyMinutes ?? 10;
-    const notificationDelayMinutes = readyMinutes > 10 ? 1 : 0;
+    const notificationDelayMinutes = Math.max(readyMinutes - 1, 0);
     const offerAfter = new Date(Date.now() + notificationDelayMinutes * 60_000);
 
     const customerResult = await client.query(
@@ -2883,21 +2801,21 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
     );
 
     const offeredRiders =
-      readyMinutes > 10
-        ? []
-        : await offerBusinessOrderToEligibleRiders(
+      notificationDelayMinutes === 0
+        ? await offerBusinessOrderToEligibleRiders(
             client,
             orderResult.rows[0].id,
             "NEARBY",
-          );
+          )
+        : [];
 
     await client.query(
       "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'CREATED', $2, $3)",
       [
         orderResult.rows[0].id,
         offeredRiders.length > 0 ? "OFFERED" : "CREATED",
-        readyMinutes > 10
-          ? "Rider notification scheduled 1 minute after order creation"
+        notificationDelayMinutes > 0
+          ? `Rider notification scheduled ${notificationDelayMinutes} minutes after order creation`
           : offeredRiders.length > 0
             ? "Offered to online riders within 1km"
             : "No eligible rider found within 1km",
@@ -3749,6 +3667,24 @@ app.post("/zones/resolve", async (req, res, next) => {
   }
 });
 
+app.post("/riders/:id/itinerary", async (req, res, next) => {
+  try {
+    const {id} = z.object({id:z.string().uuid()}).parse(req.params);
+    if(req.header("x-rider-id") !== id) {
+      res.status(403).json({error:"RIDER_NOT_AUTHORIZED"}); return;
+    }
+    const origin = z.object({lat:z.number().min(-90).max(90),lng:z.number().min(-180).max(180)}).parse(req.body);
+    const dashboard = await buildRiderDashboard(id);
+    const orders = dashboard.activeOrders.map(order => ({
+      id:String(order.id),code:String(order.code),status:String(order.status),businessName:String(order.businessName),
+      pickupAddress:String(order.pickupAddress),pickupLat:order.pickupLat,pickupLng:order.pickupLng,
+      dropoffAddress:String(order.dropoffAddress),dropoffLat:order.dropoffLat,dropoffLng:order.dropoffLng,
+    }));
+    const route = await buildItinerary(googleMapsApiKey, origin, orders);
+    res.json({...route,coordinates:route.encodedPolyline ? decodeGooglePolyline(route.encodedPolyline) : []});
+  } catch(error) { next(error); }
+});
+
 app.post("/orders/:id/accept", async (req, res, next) => {
   const client = await pool.connect();
 
@@ -3793,6 +3729,9 @@ app.post("/orders/:id/accept", async (req, res, next) => {
     }
 
     await client.query("BEGIN");
+    await client.query("SELECT id FROM rider_profiles WHERE id = $1 FOR UPDATE", [body.riderId]);
+    const capacity = await client.query("SELECT COUNT(*)::int AS count FROM orders WHERE assigned_rider_id = $1 AND status IN ('ACCEPTED', 'PICKED_UP')", [body.riderId]);
+    if (capacity.rows[0].count >= 4) throw new Error("RIDER_ORDER_CAPACITY_REACHED");
     const { rows } = await client.query(
       "SELECT * FROM accept_order_atomic($1, $2)",
       [params.id, body.riderId],

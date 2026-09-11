@@ -33,6 +33,7 @@ export default function DeliveryPage() {
   const router = useRouter();
   const [dashboard, setDashboard] = useState<RiderDashboard | null>(null);
   const [message, setMessage] = useState("Duke lexuar porosine...");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -42,10 +43,14 @@ export default function DeliveryPage() {
       return;
     }
     refresh();
+    const timer = window.setInterval(() => {
+      void refresh(false);
+    }, 15000);
+    return () => window.clearInterval(timer);
   }, [router]);
 
-  async function refresh() {
-    setLoading(true);
+  async function refresh(showLoading = true) {
+    if (showLoading) setLoading(true);
     try {
       const data = await getRiderDashboard();
       setDashboard(data);
@@ -62,7 +67,14 @@ export default function DeliveryPage() {
     }
   }
 
-  const order = dashboard?.activeOrder ?? dashboard?.pendingOffers[0] ?? null;
+  const activeOrders =
+    dashboard?.activeOrders ??
+    (dashboard?.activeOrder ? [dashboard.activeOrder] : []);
+  const order =
+    activeOrders.find((item) => item.id === selectedId) ??
+    activeOrders[0] ??
+    dashboard?.pendingOffers[0] ??
+    null;
   const isOffer = Boolean(order && order.status === "OFFERED");
   const leg = useMemo(
     () => (order?.status === "PICKED_UP" ? "dropoff" : "pickup"),
@@ -74,9 +86,14 @@ export default function DeliveryPage() {
     try {
       await acceptOrder(orderToAccept.id);
       await refresh();
-    } catch {
-      setMessage("Porosia u mor nga dikush tjeter ose oferta skadoi.");
+    } catch (error) {
       await refresh();
+      setMessage(
+        error instanceof RiderApiError &&
+          error.code === "RIDER_ORDER_CAPACITY_REACHED"
+          ? "Ke katër porosi aktive. Përfundo një dorëzim para se të pranosh një tjetër."
+          : "Porosia u mor nga dikush tjeter ose oferta skadoi.",
+      );
     } finally {
       setBusy(false);
     }
@@ -88,7 +105,7 @@ export default function DeliveryPage() {
       await rejectOrder(orderToReject.id);
       await refresh();
     } catch {
-      setMessage("Oferta nuk u refuzua dot.");
+      setMessage("Oferta nuk u refuzua. Provo përsëri.");
     } finally {
       setBusy(false);
     }
@@ -99,11 +116,11 @@ export default function DeliveryPage() {
     setBusy(true);
     try {
       await updateOrderStatus(order.id, status);
-      if (status === "DELIVERED") router.push("/earnings");
-      else await refresh();
+      setSelectedId(null);
+      await refresh();
     } catch {
       setMessage(
-        "Statusi nuk u perditesua dot. Kontrollo tranzicionin e porosise.",
+        "Porosia nuk u përditësua. Rifresko të dhënat dhe kontrollo statusin para se të provosh përsëri.",
       );
     } finally {
       setBusy(false);
@@ -111,15 +128,7 @@ export default function DeliveryPage() {
   }
 
   const navigationUrl = order
-    ? `https://www.google.com/maps/dir/?api=1&origin=${
-        order.status === "PICKED_UP"
-          ? `${order.pickupLat},${order.pickupLng}`
-          : `${order.dropoffLat},${order.dropoffLng}`
-      }&destination=${
-        order.status === "PICKED_UP"
-          ? `${order.dropoffLat},${order.dropoffLng}`
-          : `${order.pickupLat},${order.pickupLng}`
-      }&travelmode=driving`
+    ? `https://www.google.com/maps/dir/?api=1&destination=${order.status === "PICKED_UP" ? `${order.dropoffLat},${order.dropoffLng}` : `${order.pickupLat},${order.pickupLng}`}&travelmode=driving&dir_action=navigate`
     : "#";
 
   return (
@@ -133,7 +142,9 @@ export default function DeliveryPage() {
         logoutRider();
         router.replace("/login");
       }}
-      onRefresh={refresh}
+      onRefresh={() => {
+        void refresh();
+      }}
       refreshing={loading}
     >
       <section className="ops-delivery-layout">
@@ -144,6 +155,23 @@ export default function DeliveryPage() {
             </p>
           ) : null}
 
+          {activeOrders.length > 1 && (
+            <label className="type-input block">
+              Porositë aktive ({activeOrders.length})
+              <select
+                className="rider-soft mt-2 w-full rounded-lg border p-3"
+                value={order?.id ?? ""}
+                onChange={(event) => setSelectedId(event.target.value)}
+              >
+                {activeOrders.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.code} · {item.businessName} ·{" "}
+                    {item.status === "PICKED_UP" ? "Dorëzim" : "Marrje"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {order ? (
             <section className="rider-panel rounded-3xl border p-5 shadow-happy">
               <div className="flex items-start justify-between gap-3">
@@ -262,7 +290,9 @@ export default function DeliveryPage() {
                 {loading ? "Po ngarkohet..." : "Ska porosi aktive"}
               </h2>
               <p className="type-body mt-2 text-white/58">
-                Kalo online nga dashboard-i dhe ofertat do te shfaqen ketu.
+                Aktivizo Online nga dashboard-i dhe lejo vendndodhjen. Ofertat
+                shfaqen fillimisht për motoristët më pranë biznesit dhe pastaj
+                u dërgohen motoristëve të tjerë të lirë.
               </p>
             </section>
           )}
@@ -293,6 +323,8 @@ export default function DeliveryPage() {
 
         <RiderMap
           isOnline={Boolean(dashboard?.rider.isOnline)}
+          orders={activeOrders}
+          onSelectOrder={setSelectedId}
           leg={leg}
           order={order}
         />

@@ -160,8 +160,8 @@ export default function RiderHome() {
       setLoadError(true);
       setMessage(
         error instanceof RiderApiError && error.code === "RIDER_API_TIMEOUT"
-          ? "API-ja po vonon. Kontrollo nese serveri lokal dhe Postgres jane ndezur."
-          : "Nuk u lidh dot me API/Postgres lokal. Kontrollo serverin dhe databazen.",
+          ? "Kërkesa po zgjat më shumë se zakonisht. Provo përsëri pas pak."
+          : "Të dhënat nuk u ngarkuan. Kontrollo lidhjen me internetin dhe provo përsëri.",
       );
     } finally {
       setLoadingDashboard(false);
@@ -202,7 +202,7 @@ export default function RiderHome() {
           : "Je offline. GPS nuk transmetohet.",
       );
     } catch {
-      setMessage("Nuk u ndryshua dot statusi Online/Offline.");
+      setMessage("Disponueshmëria nuk u ndryshua. Provo përsëri.");
     } finally {
       setBusy(false);
     }
@@ -214,9 +214,11 @@ export default function RiderHome() {
       await acceptOrder(order.id);
       await refreshDashboard();
       router.push("/delivery");
-    } catch {
+    } catch (error) {
       await refreshDashboard();
-      setMessage("Porosia u mor nga dikush tjeter ose oferta skadoi.");
+      setMessage(error instanceof RiderApiError && error.code === "RIDER_ORDER_CAPACITY_REACHED"
+        ? "Ke katër porosi aktive. Përfundo një dorëzim para se të pranosh një tjetër."
+        : "Porosia u mor nga dikush tjeter ose oferta skadoi.");
     } finally {
       setBusy(false);
     }
@@ -228,7 +230,7 @@ export default function RiderHome() {
       await rejectOrder(order.id);
       await refreshDashboard();
     } catch {
-      setMessage("Oferta nuk u refuzua dot.");
+      setMessage("Oferta nuk u refuzua. Provo përsëri.");
     } finally {
       setBusy(false);
     }
@@ -240,8 +242,8 @@ export default function RiderHome() {
   }
 
   const activeOrders = useMemo(
-    () => (dashboard?.activeOrder ? [dashboard.activeOrder] : []),
-    [dashboard?.activeOrder],
+    () => dashboard?.activeOrders ?? (dashboard?.activeOrder ? [dashboard.activeOrder] : []),
+    [dashboard?.activeOrders, dashboard?.activeOrder],
   );
 
   const displayedOrders = (

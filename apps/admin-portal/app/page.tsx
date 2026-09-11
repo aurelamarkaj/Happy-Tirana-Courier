@@ -374,7 +374,7 @@ export default function AdminHome() {
                   ? `${filteredOrders.length} nga ${orders.length} porosi aktive`
                   : "Te dhenat mungojne"}
             </span>
-            <span>Transport lokal</span>
+            <span>Transporti</span>
           </div>
         </section>
 

@@ -98,7 +98,7 @@ export default function BusinessesPage() {
       }
       setMessage("");
     } catch {
-      setMessage("Nuk u lexuan bizneset/kategorite nga databaza lokale.");
+      setMessage("Nuk u lexuan bizneset/kategorite Përditësim i porosisë.");
     } finally {
       setLoading(false);
     }
@@ -145,10 +145,10 @@ export default function BusinessesPage() {
       setForm(emptyForm);
       setShowForm(false);
       await loadBusinesses();
-      setMessage("Biznesi u krijua dhe u ruajt ne databazen lokale.");
+      setMessage("Biznesi u krijua me sukses.");
     } catch {
       setMessage(
-        "Krijimi i biznesit deshtoi. Kontrollo telefonin/email-in ose Postgres.",
+        "Biznesi nuk u krijua. Kontrollo të dhënat dhe provo përsëri.",
       );
     } finally {
       setSaving(false);
@@ -169,10 +169,10 @@ export default function BusinessesPage() {
       setCategoryForm({ name: "" });
       setForm((current) => ({ ...current, category: data.category.name }));
       await loadBusinesses();
-      setMessage("Kategoria u krijua dhe u shtua ne dropdown.");
+      setMessage("Kategoria u krijua dhe është gati për t’u përdorur.");
     } catch {
       setMessage(
-        "Kategoria nuk u ruajt. Kontrollo nese ekziston ose Postgres eshte aktiv.",
+        "Kategoria nuk u ruajt. Kontrollo nëse ky emër ekziston dhe provo përsëri.",
       );
     } finally {
       setSavingCategory(false);
@@ -183,7 +183,7 @@ export default function BusinessesPage() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      setMessage("Zgjidh nje file fotoje.");
+      setMessage("Zgjidh një skedar fotografie.");
       return;
     }
     if (file.size > 2_000_000) {
@@ -317,7 +317,7 @@ export default function BusinessesPage() {
                   onChange={(event) =>
                     setForm({ ...form, email: event.target.value })
                   }
-                  placeholder="biznes@example.local"
+                  placeholder="biznes@example.com"
                   type="email"
                   value={form.email}
                 />

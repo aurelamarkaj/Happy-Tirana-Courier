@@ -161,7 +161,7 @@ export function ZoneBuilderMap({
       <div className="absolute inset-0" ref={mapElementRef} />
       {loadError || !hasGoogleMapsKey() ? (
         <MapFallback
-          detail="Google Maps aktivizohet sapo te vendoset API key."
+          detail="Harta nuk është e disponueshme. Provo përsëri pas pak."
           title="Ndertues zonash"
         />
       ) : null}
@@ -254,7 +254,7 @@ export function AdminLiveMap({
       <div className="absolute inset-0" ref={mapElementRef} />
       {loadError || !hasGoogleMapsKey() ? (
         <MapFallback
-          detail="Vendndodhjet live do shfaqen mbi Google Maps me API key."
+          detail="Harta nuk u ngarkua. Kontrollo lidhjen me internetin dhe provo përsëri."
           title="Live map"
         />
       ) : null}

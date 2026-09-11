@@ -31,7 +31,7 @@ export default function ZonesPage() {
       setZones(data.zones);
       setMessage("");
     } catch {
-      setMessage("Nuk u lexuan zonat nga databaza lokale.");
+      setMessage("Nuk u lexuan zonat Përditësim i porosisë.");
     } finally {
       setLoading(false);
     }
@@ -73,11 +73,11 @@ export default function ZonesPage() {
       setPoints([]);
       await loadZones();
       setMessage(
-        "Zona u ruajt ne PostGIS dhe mund te perdoret per llogaritjen e transportit.",
+        "Zona u ruajt me sukses dhe është gati për llogaritjen e transportit.",
       );
     } catch {
       setMessage(
-        "Zona nuk u ruajt. Kontrollo qe poligoni te mos kete vija qe priten dhe Postgres te jete aktiv.",
+        "Zona nuk u ruajt. Kontrollo që kufijtë e saj të mos kryqëzohen dhe provo përsëri.",
       );
     } finally {
       setSaving(false);
@@ -100,8 +100,8 @@ export default function ZonesPage() {
           Krijo zone
         </button>
       }
-      description="Zonat ruhen si poligone PostGIS. Area te vecanta si Unaza mund te shtojne surcharge mbi tarifen e distances."
-      eyebrow="PostGIS"
+      description="Përcakto zonat e dorëzimit në hartë dhe tarifat shtesë për zona të veçanta, si Unaza."
+      eyebrow="Zonat e dorëzimit"
       title="Zona dhe cmime"
     >
       <section className="grid gap-3 md:grid-cols-3">

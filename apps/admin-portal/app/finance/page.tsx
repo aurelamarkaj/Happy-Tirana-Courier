@@ -15,7 +15,7 @@ export default function FinancePage() {
         setFinance(data);
         setMessage("");
       })
-      .catch(() => setMessage("Financat nuk u lexuan dot nga databaza."));
+      .catch(() => setMessage("Të dhënat financiare nuk u ngarkuan. Provo përsëri pas pak."));
   }, []);
 
   return (

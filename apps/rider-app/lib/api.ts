@@ -79,6 +79,7 @@ export interface RiderDashboard {
     isDebitBlocked: boolean;
   };
   activeOrder: RiderOrder | null;
+  activeOrders: RiderOrder[];
   pendingOffers: RiderOrder[];
   recentOrders: RiderOrder[];
   metrics: RiderMetrics;
@@ -275,4 +276,26 @@ export function formatLek(value: number) {
     new Intl.NumberFormat("sq-AL", { maximumFractionDigits: 0 }).format(value) +
     " ALL"
   );
+}
+
+export interface RiderStop extends RoutePoint {
+  orderId: string;
+  code: string;
+  kind: "pickup" | "dropoff";
+  title: string;
+  address: string;
+}
+export interface RiderItinerary {
+  stops: RiderStop[];
+  coordinates: RoutePoint[];
+  distanceMeters: number;
+  durationSeconds: number;
+}
+export async function getRiderItinerary(origin: RoutePoint) {
+  const session = getRiderSession();
+  if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");
+  return riderFetch<RiderItinerary>(`/riders/${session.id}/itinerary`, {
+    method: "POST",
+    body: JSON.stringify(origin),
+  });
 }

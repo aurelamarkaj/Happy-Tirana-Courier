@@ -33,7 +33,7 @@ export default function BusinessLoginPage() {
       await loginBusiness({ email, password });
       router.replace("/");
     } catch {
-      setMessage("Login nuk u krye. Kontrollo email-in dhe password-in.");
+      setMessage("Hyrja nuk u krye. Kontrollo email-in dhe fjalëkalimin.");
     } finally {
       setSubmitting(false);
     }
@@ -58,7 +58,7 @@ export default function BusinessLoginPage() {
           <div className="grid h-12 w-12 place-items-center rounded-xl bg-happy-orange/15 text-happy-orange">
             <Store className="h-6 w-6" />
           </div>
-          <h1 className="type-screen-title mt-4">Login biznesi</h1>
+          <h1 className="type-screen-title mt-4">Hyrja e biznesit</h1>
           <p className="type-body mt-2 text-white/58">
             Hyr me kredencialet që janë krijuar nga superadmini.
           </p>
@@ -78,7 +78,7 @@ export default function BusinessLoginPage() {
               </span>
             </label>
             <label className="type-input block">
-              Password
+              Fjalëkalimi
               <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3 focus-within:border-white/35">
                 <LockKeyhole className="mr-3 h-5 w-5 text-happy-orange" />
                 <input

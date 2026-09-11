@@ -29,8 +29,8 @@ export default function LoginPage() {
     } catch (error) {
       setMessage(
         error instanceof ApiError && error.code === "ADMIN_API_TIMEOUT"
-          ? "API-ja po vonon. Kontrollo nese serveri lokal dhe Postgres jane ndezur."
-          : "Login nuk u krye. Kontrollo kredencialet ose API/Postgres.",
+          ? "Kërkesa po zgjat më shumë se zakonisht. Provo përsëri pas pak."
+          : "Hyrja nuk u krye. Kontrollo kredencialet dhe provo përsëri.",
       );
     } finally {
       setSubmitting(false);
@@ -70,7 +70,7 @@ export default function LoginPage() {
           <div className="grid h-12 w-12 place-items-center rounded-xl bg-happy-orange/15 text-happy-orange">
             <ShieldCheck className="h-6 w-6" />
           </div>
-          <h1 className="type-screen-title mt-4">Admin Login</h1>
+          <h1 className="type-screen-title mt-4">Hyrja e administratorit</h1>
           <p className="type-body mt-2 text-white/58">
             Hyr per te menaxhuar platformen Happy Tirana Courier.
           </p>

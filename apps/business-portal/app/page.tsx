@@ -271,25 +271,28 @@ export default function BusinessHome() {
   function orderApiMessage(error: unknown, fallback: string) {
     if (!(error instanceof BusinessApiError)) return fallback;
     if (error.code === "GOOGLE_DIRECTIONS_API_KEY_REQUIRED") {
-      return "Transporti nuk mund të llogaritet sepse shërbimi i distancave nuk është konfiguruar. Kontakto administratorin për ta aktivizuar.";
+      return "Llogaritja e transportit nuk është e disponueshme. Kontakto administratorin për ndihmë.";
+    }
+    if (error.code === "GOOGLE_DIRECTIONS_SERVICE_DISABLED") {
+      return "Llogaritja e transportit nuk është e disponueshme. Kontakto administratorin për ndihmë.";
     }
     if (error.code === "GOOGLE_DIRECTIONS_REQUEST_DENIED") {
-      return "Google Directions refuzoi kerkesen. Kontrollo API key, billing dhe Directions API ne Google Cloud.";
+      return "Llogaritja e transportit nuk është e disponueshme. Kontakto administratorin për ndihmë.";
     }
     if (
       error.code === "GOOGLE_DIRECTIONS_OVER_DAILY_LIMIT" ||
       error.code === "GOOGLE_DIRECTIONS_OVER_QUERY_LIMIT"
     ) {
-      return "Google Directions ka arritur limitin e perdorimit. Kontrollo quota/billing ne Google Cloud.";
+      return "Llogaritja e transportit është përkohësisht e padisponueshme. Provo përsëri pas pak.";
     }
     if (
       error.code === "GOOGLE_DIRECTIONS_ZERO_RESULTS" ||
       error.code === "GOOGLE_DIRECTIONS_ROUTE_NOT_FOUND"
     ) {
-      return "Google Directions nuk ktheu rruge per kete destinacion. Kontrollo linkun ose provo perseri.";
+      return "Nuk u gjet rrugë drejt këtij destinacioni. Kontrollo adresën ose linkun e Google Maps.";
     }
     if (error.code.startsWith("GOOGLE_DIRECTIONS_")) {
-      return "Google Directions deshtoi perkohesisht. Provo perseri pas pak.";
+      return "Itinerari nuk u llogarit. Provo përsëri pas pak.";
     }
     if (error.code === "DELIVERY_ZONE_NOT_FOUND") {
       return "Destinacioni është jashtë zonave të dorëzimit. Zgjidh një adresë brenda zonës së shërbimit.";
@@ -319,7 +322,7 @@ export default function BusinessHome() {
     }
     if (!hasCoordinates && !orderForm.googleMapsUrl.trim()) {
       setMessage(
-        "Zgjidh adresen nga dropdown ose vendos linkun e Google Maps.",
+        "Zgjidh adresën nga lista e sugjerimeve ose vendos linkun e Google Maps.",
       );
       return;
     }
@@ -347,7 +350,7 @@ export default function BusinessHome() {
       setMessage(
         orderApiMessage(
           error,
-          "Nuk u llogarit dot fatura. Kontrollo zonen, linkun e Google Maps dhe API/Postgres.",
+          "Fatura nuk u llogarit. Kontrollo adresën e dorëzimit dhe provo përsëri.",
         ),
       );
     } finally {
@@ -424,7 +427,7 @@ export default function BusinessHome() {
       setMessage(
         orderApiMessage(
           error,
-          "Porosia nuk u krijua dot. Kontrollo adresen, zonen e dorezimit dhe API/Postgres.",
+          "Porosia nuk u krijua. Kontrollo të dhënat e klientit dhe adresën, pastaj provo përsëri.",
         ),
       );
     } finally {
@@ -461,7 +464,7 @@ export default function BusinessHome() {
       });
       await refreshDashboard();
     } catch {
-      setMessage("Produkti nuk u shtua dot ne databaze.");
+      setMessage("Produkti nuk u shtua. Provo përsëri pas pak.");
     } finally {
       setBusy(false);
     }
@@ -486,7 +489,7 @@ export default function BusinessHome() {
       }));
       await refreshDashboard();
     } catch {
-      setMessage("Kategoria nuk u shtua dot ne databaze.");
+      setMessage("Kategoria nuk u shtua. Provo përsëri pas pak.");
     } finally {
       setBusy(false);
     }
@@ -499,7 +502,7 @@ export default function BusinessHome() {
       await removeBusinessProduct(productId);
       await refreshDashboard();
     } catch {
-      setMessage("Produkti nuk u hoq dot nga databaza.");
+      setMessage("Produkti nuk u hoq. Provo përsëri pas pak.");
     } finally {
       setBusy(false);
     }
@@ -552,7 +555,7 @@ export default function BusinessHome() {
       cancelEditing();
       await refreshDashboard();
     } catch {
-      setMessage("Produkti nuk u ruajt dot ne databaze.");
+      setMessage("Produkti nuk u ruajt. Provo përsëri pas pak.");
     } finally {
       setBusy(false);
     }
@@ -583,7 +586,7 @@ export default function BusinessHome() {
       cancelEditingCategory();
       await refreshDashboard();
     } catch {
-      setMessage("Kategoria nuk u ruajt dot ne databaze.");
+      setMessage("Kategoria nuk u ruajt. Provo përsëri pas pak.");
     } finally {
       setBusy(false);
     }
@@ -597,7 +600,7 @@ export default function BusinessHome() {
       if (editingCategoryId === categoryId) cancelEditingCategory();
       await refreshDashboard();
     } catch {
-      setMessage("Kategoria nuk u hoq dot nga databaza.");
+      setMessage("Kategoria nuk u hoq. Provo përsëri pas pak.");
     } finally {
       setBusy(false);
     }
