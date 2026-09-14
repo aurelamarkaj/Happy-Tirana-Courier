@@ -1,11 +1,21 @@
 "use client";
 
-import { Layers3, Map, Pentagon, Plus, RotateCcw, Save } from "lucide-react";
+import {
+  Layers3,
+  Map,
+  Pentagon,
+  Plus,
+  RotateCcw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ZoneBuilderMap } from "../../components/admin-map";
 import { AdminMetric, AdminShell } from "../../components/admin-shell";
 import {
+  ApiError,
   createAdminZone,
+  deleteAdminZone,
   formatLek,
   getAdminZones,
   type AdminZone,
@@ -22,6 +32,7 @@ export default function ZonesPage() {
   const [surchargeFee, setSurchargeFee] = useState("100");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingZoneId, setDeletingZoneId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
   async function loadZones() {
@@ -81,6 +92,34 @@ export default function ZonesPage() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function removeZone(zone: AdminZone) {
+    if (
+      !window.confirm(
+        `A je i sigurt që dëshiron të fshish zonën \"${zone.name}\"?`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingZoneId(zone.id);
+    setMessage("");
+    try {
+      await deleteAdminZone(zone.id);
+      setZones((currentZones) =>
+        currentZones.filter((currentZone) => currentZone.id !== zone.id),
+      );
+      setMessage(`Zona \"${zone.name}\" u fshi me sukses.`);
+    } catch (error) {
+      setMessage(
+        error instanceof ApiError && error.code === "ZONE_HAS_ORDERS"
+          ? "Kjo zonë nuk mund të fshihet sepse ka porosi të lidhura në historik."
+          : "Zona nuk u fshi. Provo përsëri.",
+      );
+    } finally {
+      setDeletingZoneId(null);
     }
   }
 
@@ -226,25 +265,39 @@ export default function ZonesPage() {
                 {loading ? "Duke lexuar..." : zones.length}
               </span>
             </div>
-            {zones.slice(0, 6).map((zone) => (
-              <article
-                className="admin-soft rounded-2xl border p-3"
-                key={zone.id}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="type-body">{zone.name}</p>
-                  <span className="type-badge rounded-full bg-happy-orange/15 px-2 py-1 text-happy-orange">
-                    {zone.isSurchargeArea
-                      ? `+${formatLek(zone.surchargeFee)}`
-                      : formatLek(zone.transportFee)}
-                  </span>
-                </div>
-                <p className="type-secondary mt-1 text-white/45">
-                  {zone.points.length} pika · {zone.city}
-                  {zone.isSurchargeArea ? " · Area shtese" : ""}
-                </p>
-              </article>
-            ))}
+            <div className="max-h-72 space-y-3 overflow-y-auto pr-1">
+              {zones.map((zone) => (
+                <article
+                  className="admin-soft rounded-2xl border p-3"
+                  key={zone.id}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="type-body">{zone.name}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="type-badge rounded-full bg-happy-orange/15 px-2 py-1 text-happy-orange">
+                        {zone.isSurchargeArea
+                          ? `+${formatLek(zone.surchargeFee)}`
+                          : formatLek(zone.transportFee)}
+                      </span>
+                      <button
+                        aria-label={`Fshi zonën ${zone.name}`}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-400/35 text-red-300 transition hover:bg-red-400/15"
+                        disabled={deletingZoneId !== null}
+                        onClick={() => void removeZone(zone)}
+                        title="Fshi zonën"
+                        type="button"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <p className="type-secondary mt-1 text-white/45">
+                    {zone.points.length} pika · {zone.city}
+                    {zone.isSurchargeArea ? " · Area shtese" : ""}
+                  </p>
+                </article>
+              ))}
+            </div>
           </div>
         </aside>
 

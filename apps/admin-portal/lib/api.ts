@@ -238,6 +238,12 @@ export async function createAdminZone(input: {
   });
 }
 
+export async function deleteAdminZone(id: string) {
+  return apiFetch<{ ok: true }>(`/admin/zones/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getAdminLiveMap() {
   return apiFetch<{ riders: AdminRider[]; orders: AdminLiveOrder[] }>(
     "/admin/live-map",

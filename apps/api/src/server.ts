@@ -1664,6 +1664,48 @@ app.post("/admin/zones", async (req, res, next) => {
   }
 });
 
+app.delete("/admin/zones/:id", async (req, res, next) => {
+  const client = await pool.connect();
+
+  try {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await client.query("BEGIN");
+
+    const zoneResult = await client.query(
+      `SELECT z.id,
+              EXISTS (SELECT 1 FROM orders o WHERE o.zone_id = z.id) AS has_orders
+       FROM zones z
+       WHERE z.id = $1
+       FOR UPDATE`,
+      [id],
+    );
+    const zone = zoneResult.rows[0];
+
+    if (!zone) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "ZONE_NOT_FOUND" });
+      return;
+    }
+
+    if (zone.has_orders) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "ZONE_HAS_ORDERS" });
+      return;
+    }
+
+    await client.query("DELETE FROM zones WHERE id = $1", [id]);
+    await client.query("COMMIT");
+
+    io.to("admin").emit("zone.deleted", { zoneId: id });
+    res.json({ ok: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 app.get("/admin/live-map", async (_req, res, next) => {
   try {
     const riders = await pool.query(
