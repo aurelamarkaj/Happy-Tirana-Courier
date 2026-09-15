@@ -1416,6 +1416,84 @@ app.post("/admin/businesses", async (req, res, next) => {
   }
 });
 
+app.patch("/admin/businesses/:id", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        name: z.string().min(2),
+        legalName: z.string().optional().or(z.literal("")),
+        phone: z.string().min(6),
+        email: z.string().email().optional().or(z.literal("")),
+        addressText: z.string().min(4),
+        lat: z.number().optional().nullable(),
+        lng: z.number().optional().nullable(),
+        category: z.string().min(2).optional().or(z.literal("")),
+        status: z.enum(["ACTIVE", "INACTIVE", "SUSPENDED"]),
+        etaMinutes: z.coerce.number().int().min(1).max(120),
+        coverImageUrl: z.string().optional().or(z.literal("")),
+        description: z.string().optional().or(z.literal("")),
+      })
+      .parse(req.body);
+    await client.query("BEGIN");
+    const categoryName = body.category?.trim() || "Te tjera";
+    await client.query(
+      `INSERT INTO business_categories (name, active, sort_order)
+       VALUES ($1, true, 50)
+       ON CONFLICT (name) DO UPDATE SET active = true, updated_at = now()`,
+      [categoryName],
+    );
+    const updated = await client.query(
+      `UPDATE businesses SET name=$2, legal_name=NULLIF($3,''), phone=$4,
+       email=NULLIF($5,''), address_text=$6, lat=$7, lng=$8, status=$9,
+       category=$10, eta_minutes=$11, cover_image_url=NULLIF($12,''), description=NULLIF($13,'')
+       WHERE id=$1 RETURNING id`,
+      [
+        id,
+        body.name.trim(),
+        body.legalName ?? "",
+        body.phone.trim(),
+        body.email ?? "",
+        body.addressText.trim(),
+        body.lat ?? null,
+        body.lng ?? null,
+        body.status,
+        categoryName,
+        body.etaMinutes,
+        body.coverImageUrl ?? "",
+        body.description ?? "",
+      ],
+    );
+    if (!updated.rows[0]) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "BUSINESS_NOT_FOUND" });
+      return;
+    }
+    await client.query(
+      `UPDATE users u SET name=$2, email=NULLIF($3,''), phone=$4, status=$5
+       FROM business_users bu WHERE bu.business_id=$1 AND bu.user_id=u.id AND bu.is_primary=true`,
+      [id, body.name.trim(), body.email ?? "", body.phone.trim(), body.status],
+    );
+    const result = await client.query(
+      `SELECT b.id, b.name, b.legal_name, b.phone, b.email, b.address_text, b.lat, b.lng,
+              b.status, b.category, b.rating, b.eta_minutes, b.cover_image_url, b.description,
+              COUNT(DISTINCT o.id)::int AS order_count, 0::int AS product_count
+       FROM businesses b LEFT JOIN orders o ON o.business_id=b.id
+       WHERE b.id=$1 GROUP BY b.id`,
+      [id],
+    );
+    await client.query("COMMIT");
+    io.to("admin").emit("business.updated", { businessId: id });
+    res.json({ business: mapAdminBusiness(result.rows[0]) });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 app.get("/admin/riders", async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
@@ -1528,6 +1606,61 @@ app.post("/admin/riders", async (req, res, next) => {
     await client.query("COMMIT");
     io.to("admin").emit("rider.created", { riderId: riderResult.rows[0].id });
     res.status(201).json({ rider: mapAdminRider(created.rows[0]) });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.patch("/admin/riders/:id", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        name: z.string().min(2),
+        phone: z.string().min(6),
+        email: z.string().email().optional().or(z.literal("")),
+        vehicleType: z.enum(["MOTORBIKE", "DIESEL"]),
+        licenseNumber: z.string().optional().or(z.literal("")),
+        status: z.enum(["ACTIVE", "INACTIVE", "SUSPENDED"]),
+      })
+      .parse(req.body);
+    await client.query("BEGIN");
+    const updated = await client.query(
+      `UPDATE rider_profiles rp SET vehicle_type=$2, license_number=NULLIF($3,''),
+       status=$4, is_online=CASE WHEN $4 <> 'ACTIVE' THEN false ELSE rp.is_online END
+       WHERE rp.id=$1 RETURNING rp.user_id`,
+      [id, body.vehicleType, body.licenseNumber ?? "", body.status],
+    );
+    if (!updated.rows[0]) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "RIDER_NOT_FOUND" });
+      return;
+    }
+    await client.query(
+      `UPDATE users SET name=$2, phone=$3, email=NULLIF($4,''), status=$5 WHERE id=$1`,
+      [
+        updated.rows[0].user_id,
+        body.name.trim(),
+        body.phone.trim(),
+        body.email ?? "",
+        body.status,
+      ],
+    );
+    const result = await client.query(
+      `SELECT rp.id, rp.user_id, u.name, u.phone, u.email, rp.vehicle_type,
+              rp.license_number, rp.is_online, rp.status, rp.last_seen_at, rp.debit_limit_all,
+              NULL::numeric AS last_lat, NULL::numeric AS last_lng, 0::numeric AS platform_due,
+              0::int AS deliveries_today
+       FROM rider_profiles rp JOIN users u ON u.id=rp.user_id WHERE rp.id=$1`,
+      [id],
+    );
+    await client.query("COMMIT");
+    io.to("admin").emit("rider.updated", { riderId: id });
+    res.json({ rider: mapAdminRider(result.rows[0]) });
   } catch (error) {
     await client.query("ROLLBACK");
     next(error);

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ImagePlus,
   Mail,
+  Pencil,
   Phone,
   Plus,
   Save,
@@ -27,6 +28,7 @@ import {
   createAdminBusinessCategory,
   getAdminBusinesses,
   getAdminBusinessCategories,
+  updateAdminBusiness,
   type AdminBusiness,
   type AdminBusinessCategory,
 } from "../../lib/api";
@@ -60,6 +62,7 @@ export default function BusinessesPage() {
     name: "",
   });
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -128,7 +131,7 @@ export default function BusinessesPage() {
     setMessage("");
 
     try {
-      await createAdminBusiness({
+      const input = {
         name: form.name,
         legalName: form.legalName,
         phone: form.phone,
@@ -139,13 +142,25 @@ export default function BusinessesPage() {
         lng: form.lng ? Number(form.lng) : null,
         category: form.category,
         status: form.status as "ACTIVE" | "INACTIVE" | "SUSPENDED",
+        etaMinutes: 25,
         coverImageUrl: form.coverImageUrl,
         description: form.description,
-      });
+      };
+      if (editingId) {
+        const { password: _password, ...updateInput } = input;
+        await updateAdminBusiness(editingId, updateInput);
+      } else {
+        await createAdminBusiness(input);
+      }
       setForm(emptyForm);
+      setEditingId(null);
       setShowForm(false);
       await loadBusinesses();
-      setMessage("Biznesi u krijua me sukses.");
+      setMessage(
+        editingId
+          ? "Biznesi u përditësua me sukses."
+          : "Biznesi u krijua me sukses.",
+      );
     } catch {
       setMessage(
         "Biznesi nuk u krijua. Kontrollo të dhënat dhe provo përsëri.",
@@ -153,6 +168,26 @@ export default function BusinessesPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function editBusiness(business: AdminBusiness) {
+    setEditingId(business.id);
+    setForm({
+      name: business.name,
+      legalName: business.legalName ?? "",
+      phone: business.phone,
+      email: business.email ?? "",
+      password: "",
+      addressText: business.addressText,
+      lat: business.lat == null ? "" : String(business.lat),
+      lng: business.lng == null ? "" : String(business.lng),
+      category: business.category ?? "Te tjera",
+      status: business.status,
+      coverImageUrl: business.coverImageUrl ?? "",
+      description: business.description ?? "",
+    });
+    setShowForm(true);
+    setMessage("");
   }
 
   async function submitCategory(event: FormEvent<HTMLFormElement>) {
@@ -270,7 +305,9 @@ export default function BusinessesPage() {
                 <p className="type-badge uppercase tracking-wide text-happy-orange">
                   Kredenciale
                 </p>
-                <h2 className="type-section-title mt-1">Krijo biznes te ri</h2>
+                <h2 className="type-section-title mt-1">
+                  {editingId ? "Ndrysho biznesin" : "Krijo biznes te ri"}
+                </h2>
               </div>
               <span className="type-secondary w-fit rounded-full bg-white/8 px-3 py-2 text-white/55">
                 Vendos kredencialet e biznesit
@@ -329,7 +366,7 @@ export default function BusinessesPage() {
                     setForm({ ...form, password: event.target.value })
                   }
                   placeholder="Minimumi 6 karaktere"
-                  required
+                  required={!editingId}
                   type="password"
                   minLength={6}
                   autoComplete="new-password"
@@ -449,7 +486,11 @@ export default function BusinessesPage() {
                 type="submit"
               >
                 <Save className="mr-2 h-5 w-5" />
-                {saving ? "Duke ruajtur..." : "Ruaj biznesin"}
+                {saving
+                  ? "Duke ruajtur..."
+                  : editingId
+                    ? "Ruaj ndryshimet"
+                    : "Ruaj biznesin"}
               </button>
             </div>
           </form>
@@ -610,6 +651,15 @@ export default function BusinessesPage() {
                 </p>
               </div>
               <div className="flex flex-wrap items-start justify-start gap-2 md:justify-end">
+                <button
+                  aria-label={`Ndrysho ${business.name}`}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 text-white/70 hover:border-happy-orange/50 hover:text-happy-orange"
+                  onClick={() => editBusiness(business)}
+                  title="Ndrysho biznesin"
+                  type="button"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
                 <span className="type-badge h-fit rounded-full bg-white/10 px-3 py-2 text-white/62">
                   {business.category ?? "Te tjera"}
                 </span>

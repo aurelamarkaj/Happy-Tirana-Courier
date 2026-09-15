@@ -181,6 +181,29 @@ export async function createAdminBusiness(input: {
   });
 }
 
+export async function updateAdminBusiness(
+  id: string,
+  input: {
+    name: string;
+    legalName?: string;
+    phone: string;
+    email?: string;
+    addressText: string;
+    lat?: number | null;
+    lng?: number | null;
+    category?: string;
+    status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+    etaMinutes: number;
+    coverImageUrl?: string;
+    description?: string;
+  },
+) {
+  return apiFetch<{ business: AdminBusiness }>(`/admin/businesses/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function getAdminBusinessCategories() {
   return apiFetch<{ categories: AdminBusinessCategory[] }>(
     "/admin/business-categories",
@@ -216,6 +239,23 @@ export async function createAdminRider(input: {
 }) {
   return apiFetch<{ rider: AdminRider }>("/admin/riders", {
     method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateAdminRider(
+  id: string,
+  input: {
+    name: string;
+    phone: string;
+    email?: string;
+    vehicleType: "MOTORBIKE" | "DIESEL";
+    licenseNumber?: string;
+    status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+  },
+) {
+  return apiFetch<{ rider: AdminRider }>(`/admin/riders/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(input),
   });
 }

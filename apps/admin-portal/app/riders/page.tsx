@@ -4,6 +4,7 @@ import {
   Bike,
   FileCheck2,
   Plus,
+  Pencil,
   RadioTower,
   Save,
   Search,
@@ -16,6 +17,7 @@ import {
   createAdminRider,
   formatLek,
   getAdminRiders,
+  updateAdminRider,
   type AdminRider,
 } from "../../lib/api";
 
@@ -44,6 +46,7 @@ export default function RidersPage() {
   const [riders, setRiders] = useState<AdminRider[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -98,7 +101,7 @@ export default function RidersPage() {
     setMessage("");
 
     try {
-      await createAdminRider({
+      const input = {
         name: form.name,
         phone: form.phone,
         email: form.email,
@@ -106,12 +109,21 @@ export default function RidersPage() {
         vehicleType: form.vehicleType as "MOTORBIKE" | "DIESEL",
         licenseNumber: form.licenseNumber,
         status: form.status as "ACTIVE" | "INACTIVE" | "SUSPENDED",
-      });
+      };
+      if (editingId) {
+        const { password: _password, ...updateInput } = input;
+        await updateAdminRider(editingId, updateInput);
+      } else {
+        await createAdminRider(input);
+      }
       setForm(emptyForm);
+      setEditingId(null);
       setShowForm(false);
       await loadRiders();
       setMessage(
-        "Motoristi u krijua dhe mund te hyje me email/password-in e vendosur.",
+        editingId
+          ? "Motoristi u përditësua me sukses."
+          : "Motoristi u krijua dhe mund te hyje me email/password-in e vendosur.",
       );
     } catch {
       setMessage(
@@ -120,6 +132,21 @@ export default function RidersPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function editRider(rider: AdminRider) {
+    setEditingId(rider.id);
+    setForm({
+      name: rider.name,
+      phone: rider.phone,
+      email: rider.email ?? "",
+      password: "",
+      vehicleType: rider.vehicleType,
+      licenseNumber: rider.licenseNumber ?? "",
+      status: rider.status,
+    });
+    setShowForm(true);
+    setMessage("");
   }
 
   return (
@@ -172,7 +199,9 @@ export default function RidersPage() {
               <p className="type-badge uppercase tracking-wide text-happy-orange">
                 Kredenciale
               </p>
-              <h2 className="type-section-title mt-1">Krijo motorist te ri</h2>
+              <h2 className="type-section-title mt-1">
+                {editingId ? "Ndrysho motoristin" : "Krijo motorist te ri"}
+              </h2>
             </div>
             <span className="type-secondary w-fit rounded-full bg-white/8 px-3 py-2 text-white/55">
               Vendos kredencialet e motoristit
@@ -221,7 +250,7 @@ export default function RidersPage() {
                   setForm({ ...form, password: event.target.value })
                 }
                 placeholder="Minimumi 6 karaktere"
-                required
+                required={!editingId}
                 type="password"
                 minLength={6}
                 autoComplete="new-password"
@@ -388,6 +417,15 @@ export default function RidersPage() {
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button
+                  aria-label={`Ndrysho ${rider.name}`}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 text-white/70 hover:border-happy-orange/50 hover:text-happy-orange"
+                  onClick={() => editRider(rider)}
+                  title="Ndrysho motoristin"
+                  type="button"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
                 {rider.isDebitBlocked ? (
                   <span className="type-badge w-fit rounded-full bg-red-500/18 px-3 py-2 text-red-100">
                     DEBIT
