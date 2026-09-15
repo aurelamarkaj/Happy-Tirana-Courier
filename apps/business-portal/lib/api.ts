@@ -10,24 +10,6 @@ import {
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
-export interface BusinessProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  price: number;
-  imageUrl: string | null;
-  section: string | null;
-  isAvailable: boolean;
-}
-
-export interface BusinessCategory {
-  id: string;
-  name: string;
-  sortOrder: number;
-  active: boolean;
-  productCount: number;
-}
-
 export interface BusinessOrder {
   id: string;
   code: string;
@@ -72,6 +54,8 @@ export interface BusinessOrderQuote {
   lng: number;
   addressText: string;
   distanceMeters: number;
+  baseFee: number;
+  extraDistanceFee: number;
   distanceKm: number;
   distanceSource: string;
   calculatedTransportFee: number;
@@ -99,8 +83,6 @@ export interface BusinessDashboard {
     description: string | null;
     status: string;
   };
-  categories: BusinessCategory[];
-  products: BusinessProduct[];
   orders: BusinessOrder[];
   metrics: {
     pendingOrders: number;
@@ -204,9 +186,8 @@ export async function createBusinessOrder(
     googleMapsUrl?: string;
     readyMinutes?: number;
     transportFeeOverride?: number;
+    items: Array<{ name: string; price: number }>;
     productDescription?: string;
-    productValue?: number;
-    items?: Array<{ productId: string; quantity: number }>;
   },
   businessId = activeBusinessId(),
 ) {
@@ -245,6 +226,14 @@ export async function quoteBusinessOrder(
   );
 }
 
+export async function getOrderingWindow() {
+  return businessFetch<{
+    isOpen: boolean;
+    nextCheckInSeconds: number;
+    serverTime: string;
+  }>("/businesses/order-window", { cache: "no-store" });
+}
+
 export async function searchAddresses(query: string) {
   const params = new URLSearchParams({ q: query });
   return businessFetch<{ suggestions: AddressSuggestion[] }>(
@@ -271,96 +260,6 @@ export async function getRoute(input: {
   }>(`/public/routes?${params}`);
 }
 
-export async function addBusinessProduct(
-  input: {
-    name: string;
-    description: string;
-    price: number;
-    section: string;
-    imageUrl?: string;
-  },
-  businessId = activeBusinessId(),
-) {
-  return businessFetch<{ product: BusinessProduct }>(
-    `/businesses/${businessId}/products`,
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-  );
-}
-
-export async function addBusinessCategory(
-  input: { name: string; sortOrder?: number },
-  businessId = activeBusinessId(),
-) {
-  return businessFetch<{ category: BusinessCategory }>(
-    `/businesses/${businessId}/categories`,
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-  );
-}
-
-export async function editBusinessCategory(
-  categoryId: string,
-  input: { name: string; sortOrder?: number },
-  businessId = activeBusinessId(),
-) {
-  return businessFetch<{ category: BusinessCategory }>(
-    `/businesses/${businessId}/categories/${categoryId}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    },
-  );
-}
-
-export async function removeBusinessCategory(
-  categoryId: string,
-  businessId = activeBusinessId(),
-) {
-  return businessFetch<{ ok: true }>(
-    `/businesses/${businessId}/categories/${categoryId}`,
-    {
-      method: "DELETE",
-    },
-  );
-}
-
-export async function editBusinessProduct(
-  productId: string,
-  input: {
-    name: string;
-    description: string;
-    price: number;
-    section: string;
-    imageUrl?: string;
-  },
-  businessId = activeBusinessId(),
-) {
-  return businessFetch<{ product: BusinessProduct }>(
-    `/businesses/${businessId}/products/${productId}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    },
-  );
-}
-
-export async function removeBusinessProduct(
-  productId: string,
-  businessId = activeBusinessId(),
-) {
-  return businessFetch<{ ok: true }>(
-    `/businesses/${businessId}/products/${productId}`,
-    {
-      method: "DELETE",
-    },
-  );
-}
-
 export async function decideBusinessOrder(
   orderId: string,
   action: "CONFIRM" | "REFUSE",
@@ -377,7 +276,7 @@ export async function decideBusinessOrder(
 
 export function formatLek(value: number) {
   return (
-    new Intl.NumberFormat("sq-AL", { maximumFractionDigits: 0 }).format(value) +
+    new Intl.NumberFormat("sq-AL", { maximumFractionDigits: 2 }).format(value) +
     " ALL"
   );
 }

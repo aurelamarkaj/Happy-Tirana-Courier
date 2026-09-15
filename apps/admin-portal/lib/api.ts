@@ -144,7 +144,7 @@ export interface AdminFinance {
 }
 
 export function formatLek(value: number) {
-  return `${Math.round(value).toLocaleString("sq-AL")} ALL`;
+  return `${value.toLocaleString("sq-AL", { maximumFractionDigits: 2 })} ALL`;
 }
 
 export async function getAdminBusinesses() {
@@ -234,6 +234,22 @@ export async function createAdminZone(input: {
 }) {
   return apiFetch<{ zone: AdminZone }>("/admin/zones", {
     method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateAdminZone(
+  id: string,
+  input: {
+    name: string;
+    city?: string;
+    isSurchargeArea: boolean;
+    active: boolean;
+    points: MapPoint[];
+  },
+) {
+  return apiFetch<{ zone: AdminZone }>(`/admin/zones/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(input),
   });
 }

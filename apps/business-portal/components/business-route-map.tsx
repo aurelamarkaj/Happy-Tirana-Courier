@@ -6,6 +6,15 @@ import { getRoute, type BusinessOrderQuote } from "../lib/api";
 import { hasGoogleMapsKey, loadGoogleMaps } from "../lib/google-maps";
 
 type Point = { lat: number; lng: number };
+const tiranaFallback: Point = { lat: 41.3275, lng: 19.8187 };
+
+function validPoint(lat: number, lng: number): Point {
+  return Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    !(Math.abs(lat) < 0.0001 && Math.abs(lng) < 0.0001)
+    ? { lat, lng }
+    : tiranaFallback;
+}
 
 function clearOverlay(overlay: { setMap: (map: any) => void } | null) {
   if (overlay) overlay.setMap(null);
@@ -54,7 +63,7 @@ export function BusinessRouteMap({
   const [loadError, setLoadError] = useState(false);
   const [routePoints, setRoutePoints] = useState<Point[]>([]);
 
-  const pickup = { lat: business.lat, lng: business.lng };
+  const pickup = validPoint(business.lat, business.lng);
   const dropoff = quote ? { lat: quote.lat, lng: quote.lng } : null;
 
   useEffect(() => {

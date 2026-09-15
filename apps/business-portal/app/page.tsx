@@ -4,22 +4,17 @@ import {
   BadgeDollarSign,
   LayoutDashboard,
   History,
-  ArrowRight,
   BellRing,
   Calculator,
   Clock3,
-  Minus,
   Link2,
   MapPin,
   PackagePlus,
-  Pencil,
   Phone,
   Plus,
-  Save,
   Search,
   Send,
   Store,
-  Trash2,
   Truck,
   User,
   WalletCards,
@@ -31,36 +26,28 @@ import {
   OperationsSearch,
 } from "../../shared/operations-shell";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { BusinessRouteMap } from "../components/business-route-map";
 import {
-  addBusinessCategory,
-  addBusinessProduct,
   BusinessApiError,
   createBusinessOrder,
-  editBusinessCategory,
-  editBusinessProduct,
   formatLek,
   getBusinessDashboard,
+  getOrderingWindow,
   logoutBusiness,
   quoteBusinessOrder,
-  removeBusinessCategory,
-  removeBusinessProduct,
   searchAddresses,
   type AddressSuggestion,
-  type BusinessCategory,
   type BusinessDashboard,
   type BusinessOrder,
   type BusinessOrderQuote,
-  type BusinessProduct,
 } from "../lib/api";
 import { getBusinessSession } from "../lib/business-session";
 
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-const defaultProductImage = "/catalog/product-grocery-basket.webp";
 
 export default function BusinessHome() {
   const router = useRouter();
@@ -77,9 +64,7 @@ export default function BusinessHome() {
     function readView() {
       const next = new URLSearchParams(window.location.search).get("view");
       setView(
-        next && ["orders", "new", "catalog", "history"].includes(next)
-          ? next
-          : "orders",
+        next && ["orders", "new", "history"].includes(next) ? next : "orders",
       );
     }
     readView();
@@ -111,29 +96,37 @@ export default function BusinessHome() {
     googleMapsUrl: "",
     readyMinutes: "10",
     transportFeeOverride: "",
+    products: [{ name: "", price: "" }],
+    productDescription: "",
   });
   const [orderQuote, setOrderQuote] = useState<BusinessOrderQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
-  const [orderItems, setOrderItems] = useState<Record<string, number>>({});
-  const [productForm, setProductForm] = useState({
-    name: "",
-    description: "",
-    price: "",
-    section: "",
-  });
-  const [categoryForm, setCategoryForm] = useState({ name: "" });
-  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(
-    null,
-  );
-  const [categoryEditForm, setCategoryEditForm] = useState({ name: "" });
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({
-    name: "",
-    description: "",
-    price: "",
-    section: "",
-    imageUrl: defaultProductImage,
-  });
+  const quoteRequest = useRef(0);
+  const [orderingOpen, setOrderingOpen] = useState<boolean | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refreshWindow() {
+      try {
+        const window = await getOrderingWindow();
+        if (stopped) return;
+        setOrderingOpen(window.isOpen);
+        timer = setTimeout(
+          refreshWindow,
+          Math.max(1, window.nextCheckInSeconds) * 1000,
+        );
+      } catch {
+        if (stopped) return;
+        setOrderingOpen(null);
+        timer = setTimeout(refreshWindow, 10000);
+      }
+    }
+    void refreshWindow();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     const session = getBusinessSession();
@@ -159,14 +152,6 @@ export default function BusinessHome() {
       socket.disconnect();
     };
   }, []);
-
-  useEffect(() => {
-    const firstCategory = dashboard?.categories[0]?.name;
-    if (!firstCategory) return;
-    setProductForm((current) =>
-      current.section ? current : { ...current, section: firstCategory },
-    );
-  }, [dashboard?.categories]);
 
   useEffect(() => {
     const query = orderForm.addressText.trim();
@@ -229,44 +214,27 @@ export default function BusinessHome() {
       ) ?? [],
     [dashboard?.orders],
   );
-  const selectedOrderProducts = useMemo(
-    () =>
-      (dashboard?.products ?? [])
-        .map((product) => ({
-          product,
-          quantity: orderItems[product.id] ?? 0,
-        }))
-        .filter((item) => item.quantity > 0),
-    [dashboard?.products, orderItems],
+  const productSubtotal = orderForm.products.reduce(
+    (total, product) => total + (Number(product.price) || 0),
+    0,
   );
-  const productSubtotal = useMemo(
-    () =>
-      selectedOrderProducts.reduce(
-        (sum, item) => sum + item.product.price * item.quantity,
-        0,
-      ),
-    [selectedOrderProducts],
-  );
+
+  function invalidateQuote() {
+    quoteRequest.current++;
+    setOrderQuote(null);
+    setQuoteLoading(false);
+  }
 
   function selectAddress(address: AddressSuggestion) {
     setOrderForm((current) => ({
       ...current,
       addressText: address.details || `${address.label}, ${address.city}`,
+      googleMapsUrl: "",
       lat: String(address.lat),
       lng: String(address.lng),
     }));
-    setOrderQuote(null);
+    invalidateQuote();
     setAddressOpen(false);
-  }
-
-  function changeOrderItem(productId: string, delta: number) {
-    setOrderItems((current) => {
-      const quantity = Math.max(0, (current[productId] ?? 0) + delta);
-      const next = { ...current };
-      if (quantity === 0) delete next[productId];
-      else next[productId] = quantity;
-      return next;
-    });
   }
 
   function orderApiMessage(error: unknown, fallback: string) {
@@ -295,6 +263,16 @@ export default function BusinessHome() {
     if (error.code.startsWith("GOOGLE_DIRECTIONS_")) {
       return "Itinerari nuk u llogarit. Provo përsëri pas pak.";
     }
+    if (error.code === "ORDERING_CLOSED") {
+      setOrderingOpen(false);
+      return "Porosite pranohen nga 07:00 deri ne 22:59, sipas ores se Shqiperise.";
+    }
+    if (error.code === "TARIFF_ZONE_REQUIRED")
+      return "Zona e tarifimit ende nuk eshte percaktuar. Kontakto administratorin.";
+    if (error.code === "BUSINESS_OUTSIDE_COVERAGE")
+      return "Biznesi eshte jashte zones se mbulimit.";
+    if (error.code === "BUSINESS_LOCATION_REQUIRED")
+      return "Vendndodhja e biznesit mungon. Kontakto administratorin.";
     if (error.code === "DELIVERY_ZONE_NOT_FOUND") {
       return "Destinacioni është jashtë zonave të dorëzimit. Zgjidh një adresë brenda zonës së shërbimit.";
     }
@@ -305,7 +283,7 @@ export default function BusinessHome() {
   }
 
   async function quoteOrder() {
-    setOrderQuote(null);
+    invalidateQuote();
     const lat = Number(orderForm.lat);
     const lng = Number(orderForm.lng);
     const hasCoordinates =
@@ -316,7 +294,6 @@ export default function BusinessHome() {
     const override = Number(orderForm.transportFeeOverride);
     const hasOverride =
       orderForm.transportFeeOverride.trim() !== "" && Number.isFinite(override);
-
     if (!orderForm.addressText.trim() && !orderForm.googleMapsUrl.trim()) {
       setMessage("Vendos adresen ose linkun e Google Maps per destinacionin.");
       return;
@@ -328,6 +305,7 @@ export default function BusinessHome() {
       return;
     }
 
+    const request = quoteRequest.current;
     setQuoteLoading(true);
     setMessage("");
     try {
@@ -338,6 +316,7 @@ export default function BusinessHome() {
         googleMapsUrl: orderForm.googleMapsUrl.trim() || undefined,
         transportFeeOverride: hasOverride ? override : undefined,
       });
+      if (request !== quoteRequest.current) return;
       setOrderQuote(data.quote);
       setOrderForm((current) => ({
         ...current,
@@ -347,6 +326,7 @@ export default function BusinessHome() {
         googleMapsUrl: data.quote.googleMapsUrl ?? current.googleMapsUrl,
       }));
     } catch (error) {
+      if (request !== quoteRequest.current) return;
       setOrderQuote(null);
       setMessage(
         orderApiMessage(
@@ -355,29 +335,48 @@ export default function BusinessHome() {
         ),
       );
     } finally {
-      setQuoteLoading(false);
+      if (request === quoteRequest.current) setQuoteLoading(false);
     }
   }
 
   async function createOrder() {
+    if (busy) return;
+    if (orderingOpen !== true) {
+      setMessage(
+        "Porosite pranohen nga 07:00 deri ne 22:59. Kontrollo orarin dhe provo perseri.",
+      );
+      return;
+    }
     const lat = Number(orderForm.lat);
     const lng = Number(orderForm.lng);
-    const readyMinutes = Number(orderForm.readyMinutes);
+    const readyMinutes =
+      orderForm.readyMinutes.trim() === ""
+        ? 10
+        : Number(orderForm.readyMinutes);
     const override = Number(orderForm.transportFeeOverride);
     const hasOverride =
       orderForm.transportFeeOverride.trim() !== "" && Number.isFinite(override);
+    const validProducts = orderForm.products.every(
+      (product) =>
+        product.name.trim() &&
+        Number.isFinite(Number(product.price)) &&
+        Number(product.price) > 0,
+    );
 
     if (
       !orderForm.customerName.trim() ||
       !orderForm.customerPhone.trim() ||
       !orderForm.addressText.trim() ||
+      !validProducts ||
       !Number.isFinite(lat) ||
       !Number.isFinite(lng) ||
-      !Number.isFinite(readyMinutes) ||
-      selectedOrderProducts.length === 0
+      !Number.isInteger(readyMinutes) ||
+      readyMinutes < 0 ||
+      readyMinutes > 180 ||
+      productSubtotal <= 0
     ) {
       setMessage(
-        "Ploteso klientin, telefonin, adresen, minutat dhe zgjidh te pakten nje produkt.",
+        "Ploteso produktet me emer dhe cmim mbi 0 leke, bashke me emrin, telefonin dhe lokacionin. Minutat duhet te jene nga 0 deri ne 180.",
       );
       return;
     }
@@ -398,10 +397,11 @@ export default function BusinessHome() {
         googleMapsUrl: orderForm.googleMapsUrl.trim() || undefined,
         readyMinutes,
         transportFeeOverride: hasOverride ? override : undefined,
-        items: selectedOrderProducts.map((item) => ({
-          productId: item.product.id,
-          quantity: item.quantity,
+        items: orderForm.products.map((product) => ({
+          name: product.name.trim(),
+          price: Number(product.price),
         })),
+        productDescription: orderForm.productDescription.trim() || undefined,
       });
       setOrderForm({
         customerName: "",
@@ -412,18 +412,17 @@ export default function BusinessHome() {
         googleMapsUrl: "",
         readyMinutes: "10",
         transportFeeOverride: "",
+        products: [{ name: "", price: "" }],
+        productDescription: "",
       });
-      setOrderItems({});
-      setOrderQuote(null);
+      invalidateQuote();
       setAddressSuggestions([]);
+      await refreshDashboard();
       setMessage(
         data.offeredRiders.length
-          ? `Porosia u krijua dhe iu dergua ${data.offeredRiders.length} motorristëve më të afërt.`
-          : Number(orderForm.readyMinutes) > 10
-            ? "Porosia u krijua. Njoftimi per motorristet do te dergohet pas 1 minute."
-            : "Porosia u krijua. Nuk ka motorrist online brenda 1km per momentin.",
+          ? "Porosia u krijua dhe iu dergua motoristeve."
+          : "Porosia u krijua. Njoftimi per motoristet do te dergohet sipas kohes se pergatitjes.",
       );
-      await refreshDashboard();
     } catch (error) {
       setMessage(
         orderApiMessage(
@@ -431,177 +430,6 @@ export default function BusinessHome() {
           "Porosia nuk u krijua. Kontrollo të dhënat e klientit dhe adresën, pastaj provo përsëri.",
         ),
       );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addProduct() {
-    const price = Number(productForm.price);
-    if (
-      !productForm.name.trim() ||
-      !Number.isFinite(price) ||
-      !productForm.section
-    ) {
-      setMessage("Vendos emrin, cmimin dhe kategorine e produktit.");
-      return;
-    }
-
-    setBusy(true);
-    setMessage("");
-    try {
-      await addBusinessProduct({
-        name: productForm.name.trim(),
-        description: productForm.description.trim(),
-        price,
-        section: productForm.section,
-        imageUrl: defaultProductImage,
-      });
-      setProductForm({
-        name: "",
-        description: "",
-        price: "",
-        section: dashboard?.categories[0]?.name ?? "",
-      });
-      await refreshDashboard();
-    } catch {
-      setMessage("Produkti nuk u shtua. Provo përsëri pas pak.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addCategory() {
-    if (!categoryForm.name.trim()) {
-      setMessage("Vendos emrin e kategorise.");
-      return;
-    }
-
-    setBusy(true);
-    setMessage("");
-    try {
-      const data = await addBusinessCategory({
-        name: categoryForm.name.trim(),
-      });
-      setCategoryForm({ name: "" });
-      setProductForm((current) => ({
-        ...current,
-        section: data.category.name,
-      }));
-      await refreshDashboard();
-    } catch {
-      setMessage("Kategoria nuk u shtua. Provo përsëri pas pak.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function removeProduct(productId: string) {
-    setBusy(true);
-    setMessage("");
-    try {
-      await removeBusinessProduct(productId);
-      await refreshDashboard();
-    } catch {
-      setMessage("Produkti nuk u hoq. Provo përsëri pas pak.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function startEditing(product: BusinessProduct) {
-    setEditingProductId(product.id);
-    const availableCategory = dashboard?.categories.some(
-      (category) => category.name === product.section,
-    )
-      ? product.section
-      : dashboard?.categories[0]?.name;
-    setEditForm({
-      name: product.name,
-      description: product.description ?? "",
-      price: String(product.price),
-      section: availableCategory ?? "",
-      imageUrl: product.imageUrl ?? defaultProductImage,
-    });
-  }
-
-  function cancelEditing() {
-    setEditingProductId(null);
-    setEditForm({
-      name: "",
-      description: "",
-      price: "",
-      section: "",
-      imageUrl: defaultProductImage,
-    });
-  }
-
-  async function saveProduct(productId: string) {
-    const price = Number(editForm.price);
-    if (!editForm.name.trim() || !Number.isFinite(price) || !editForm.section) {
-      setMessage("Vendos emrin, cmimin dhe kategorine para ruajtjes.");
-      return;
-    }
-
-    setBusy(true);
-    setMessage("");
-    try {
-      await editBusinessProduct(productId, {
-        name: editForm.name.trim(),
-        description: editForm.description.trim(),
-        price,
-        section: editForm.section,
-        imageUrl: editForm.imageUrl.trim() || defaultProductImage,
-      });
-      cancelEditing();
-      await refreshDashboard();
-    } catch {
-      setMessage("Produkti nuk u ruajt. Provo përsëri pas pak.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function startEditingCategory(category: BusinessCategory) {
-    setEditingCategoryId(category.id);
-    setCategoryEditForm({ name: category.name });
-  }
-
-  function cancelEditingCategory() {
-    setEditingCategoryId(null);
-    setCategoryEditForm({ name: "" });
-  }
-
-  async function saveCategory(categoryId: string) {
-    if (!categoryEditForm.name.trim()) {
-      setMessage("Vendos emrin para ruajtjes se kategorise.");
-      return;
-    }
-
-    setBusy(true);
-    setMessage("");
-    try {
-      await editBusinessCategory(categoryId, {
-        name: categoryEditForm.name.trim(),
-      });
-      cancelEditingCategory();
-      await refreshDashboard();
-    } catch {
-      setMessage("Kategoria nuk u ruajt. Provo përsëri pas pak.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function removeCategory(categoryId: string) {
-    setBusy(true);
-    setMessage("");
-    try {
-      await removeBusinessCategory(categoryId);
-      if (editingCategoryId === categoryId) cancelEditingCategory();
-      await refreshDashboard();
-    } catch {
-      setMessage("Kategoria nuk u hoq. Provo përsëri pas pak.");
     } finally {
       setBusy(false);
     }
@@ -624,7 +452,6 @@ export default function BusinessHome() {
   const navigation = [
     { id: "orders", label: "Porosite", icon: LayoutDashboard },
     { id: "new", label: "Porosi e re", icon: PackagePlus },
-    { id: "catalog", label: "Katalogu", icon: Store },
     { id: "history", label: "Historia", icon: History },
   ];
 
@@ -637,9 +464,7 @@ export default function BusinessHome() {
           ? (dashboard?.business.name ?? "Pasqyra e biznesit")
           : view === "new"
             ? "Porosi e re"
-            : view === "catalog"
-              ? "Katalogu i biznesit"
-              : "Historia e porosive"
+            : "Historia e porosive"
       }
       active={view}
       items={navigation}
@@ -753,191 +578,355 @@ export default function BusinessHome() {
 
                 <form
                   className="mt-5 grid gap-4"
-                  onSubmit={(event) => event.preventDefault()}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void createOrder();
+                  }}
                 >
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <IconField
-                      icon={User}
-                      label="Emri i klientit"
-                      onChange={(value) =>
+                  {orderingOpen !== true && (
+                    <p className="ops-notice" role="status">
+                      {orderingOpen === null
+                        ? "Po verifikohet orari i porosive..."
+                        : "Porosite pranohen nga 07:00 deri ne 22:59 (ora e Shqiperise)."}
+                    </p>
+                  )}
+                  <fieldset disabled={busy} className="contents">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <IconField
+                        icon={User}
+                        label="Emri i klientit *"
+                        required
+                        onChange={(value) =>
+                          setOrderForm((current) => ({
+                            ...current,
+                            customerName: value,
+                          }))
+                        }
+                        placeholder="P.sh. Ardit Hoxha"
+                        value={orderForm.customerName}
+                      />
+                      <IconField
+                        icon={Phone}
+                        label="Telefoni i klientit *"
+                        required
+                        type="tel"
+                        onChange={(value) =>
+                          setOrderForm((current) => ({
+                            ...current,
+                            customerPhone: value,
+                          }))
+                        }
+                        placeholder="+355 69 ..."
+                        value={orderForm.customerPhone}
+                      />
+                    </div>
+
+                    <AddressField
+                      onChange={(value) => {
+                        setAddressOpen(true);
+                        invalidateQuote();
                         setOrderForm((current) => ({
                           ...current,
-                          customerName: value,
-                        }))
-                      }
-                      placeholder="P.sh. Ardit Hoxha"
-                      value={orderForm.customerName}
+                          addressText: value,
+                          lat: "",
+                          lng: "",
+                        }));
+                      }}
+                      onSelect={selectAddress}
+                      open={addressOpen}
+                      suggestions={addressSuggestions}
+                      value={orderForm.addressText}
                     />
-                    <IconField
-                      icon={Phone}
-                      label="Telefoni i klientit"
-                      onChange={(value) =>
-                        setOrderForm((current) => ({
-                          ...current,
-                          customerPhone: value,
-                        }))
-                      }
-                      placeholder="+355 69 ..."
-                      value={orderForm.customerPhone}
-                    />
-                  </div>
 
-                  <AddressField
-                    onChange={(value) => {
-                      setAddressOpen(true);
-                      setOrderQuote(null);
-                      setOrderForm((current) => ({
-                        ...current,
-                        addressText: value,
-                        lat: "",
-                        lng: "",
-                      }));
-                    }}
-                    onSelect={selectAddress}
-                    open={addressOpen}
-                    suggestions={addressSuggestions}
-                    value={orderForm.addressText}
-                  />
-
-                  <div className="grid gap-3 md:grid-cols-[1fr_180px]">
-                    <label className="type-input block">
-                      Link Google Maps i destinacionit
-                      <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
-                        <Link2 className="mr-3 h-5 w-5 text-happy-orange" />
-                        <input
-                          className="w-full bg-transparent outline-none placeholder:text-white/35"
-                          onChange={(event) => {
-                            setOrderQuote(null);
-                            setOrderForm((current) => ({
-                              ...current,
-                              googleMapsUrl: event.target.value,
-                            }));
-                          }}
-                          placeholder="https://maps.app.goo.gl/..."
-                          value={orderForm.googleMapsUrl}
-                        />
-                      </span>
-                    </label>
-                    <label className="type-input block">
-                      Gati për minuta
-                      <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
-                        <Clock3 className="mr-3 h-5 w-5 text-happy-orange" />
-                        <input
-                          className="w-full bg-transparent outline-none placeholder:text-white/35"
-                          min={0}
-                          onChange={(event) =>
-                            setOrderForm((current) => ({
-                              ...current,
-                              readyMinutes: event.target.value,
-                            }))
-                          }
-                          placeholder="10"
-                          type="number"
-                          value={orderForm.readyMinutes}
-                        />
-                      </span>
-                    </label>
-                  </div>
-
-                  <ProductPicker
-                    items={orderItems}
-                    onChange={changeOrderItem}
-                    products={dashboard?.products ?? []}
-                    subtotal={productSubtotal}
-                  />
-
-                  <div className="ops-quote grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
-                    <div>
-                      <p className="type-product">
-                        Subtotal produktesh: {formatLek(productSubtotal)}
-                      </p>
-                      {orderQuote ? (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2" aria-live="polite">
-                          <QuotePill
-                            label="Distanca"
-                            value={`${orderQuote.distanceKm.toFixed(2)} km`}
-                          />
-                          <QuotePill
-                            label="Shtesë Unaza"
-                            value={
-                              orderQuote.ringSurchargeApplied
-                                ? formatLek(orderQuote.ringSurchargeFee)
-                                : "Jo"
-                            }
-                          />
-                          <QuotePill
-                            label="Transport"
-                            value={formatLek(orderQuote.finalTransportFee)}
-                          />
-                          <QuotePill
-                            label="Totali për pagesë"
-                            value={formatLek(productSubtotal + orderQuote.finalTransportFee)}
-                          />
-                        </div>
-                      ) : (
-                        <p className="type-secondary mt-1 text-white/48">
-                          Transporti ende nuk eshte llogaritur.
-                        </p>
-                      )}
-                      <label className="type-input mt-3 block max-w-xs">
-                        Ndrysho tarifën manualisht
-                        <span className="mt-2 flex h-11 items-center rounded-xl border border-white/10 bg-black/18 px-3">
-                          <BadgeDollarSign className="mr-3 h-5 w-5 text-happy-orange" />
+                    <div className="grid gap-3 md:grid-cols-[1fr_180px]">
+                      <label className="type-input block">
+                        Link Google Maps i destinacionit
+                        <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+                          <Link2 className="mr-3 h-5 w-5 text-happy-orange" />
                           <input
                             className="w-full bg-transparent outline-none placeholder:text-white/35"
                             onChange={(event) => {
-                              setOrderQuote(null);
+                              invalidateQuote();
                               setOrderForm((current) => ({
                                 ...current,
-                                transportFeeOverride: event.target.value,
+                                googleMapsUrl: event.target.value,
+                                lat: "",
+                                lng: "",
+                                addressText: "",
                               }));
                             }}
-                            placeholder="Opsionale"
+                            placeholder="https://maps.app.goo.gl/..."
+                            value={orderForm.googleMapsUrl}
+                          />
+                        </span>
+                      </label>
+                      <label className="type-input block">
+                        Gati për minuta (opsionale)
+                        <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+                          <Clock3 className="mr-3 h-5 w-5 text-happy-orange" />
+                          <input
+                            className="w-full bg-transparent outline-none placeholder:text-white/35"
+                            min={0}
+                            max={180}
+                            onChange={(event) =>
+                              setOrderForm((current) => ({
+                                ...current,
+                                readyMinutes: event.target.value,
+                              }))
+                            }
+                            placeholder="10"
                             type="number"
-                            value={orderForm.transportFeeOverride}
+                            value={orderForm.readyMinutes}
                           />
                         </span>
                       </label>
                     </div>
-                    <div className="grid gap-2">
-                      <button
-                        className="type-cta flex h-12 items-center justify-center rounded-xl border border-white/10 bg-white/8 px-5 text-white disabled:opacity-55"
-                        disabled={busy || quoteLoading}
-                        onClick={quoteOrder}
-                        type="button"
-                      >
-                        <Calculator className="mr-2 h-5 w-5" />
-                        {quoteLoading ? "Po llogaritet" : "Llogarit faturën"}
-                      </button>
-                      <button
-                        className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange px-5 text-white happy-pill-shadow disabled:opacity-55"
-                        disabled={
-                          busy ||
-                          quoteLoading ||
-                          !orderQuote ||
-                          !selectedOrderProducts.length
+
+                    <section className="business-soft rounded-2xl border p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="type-product">Produktet dhe çmimet *</p>
+                          <p className="type-secondary mt-1 text-white/48">
+                            Shto çdo produkt veçmas; totali llogaritet
+                            automatikisht.
+                          </p>
+                        </div>
+                        <button
+                          aria-label="Shto produkt"
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-happy-orange text-white happy-pill-shadow"
+                          onClick={() =>
+                            setOrderForm((current) => ({
+                              ...current,
+                              products: [
+                                ...current.products,
+                                { name: "", price: "" },
+                              ],
+                            }))
+                          }
+                          title="Shto produkt"
+                          type="button"
+                        >
+                          <Plus className="h-5 w-5" />
+                        </button>
+                      </div>
+                      <div className="mt-3 grid gap-3">
+                        {orderForm.products.map((product, index) => (
+                          <div
+                            className="grid gap-3 md:grid-cols-[1fr_180px_auto]"
+                            key={index}
+                          >
+                            <label className="type-input block">
+                              Produkti {index + 1}
+                              <span className="business-soft mt-2 flex h-12 items-center rounded-xl border px-3">
+                                <PackagePlus className="mr-3 h-5 w-5 text-happy-orange" />
+                                <input
+                                  className="w-full bg-transparent outline-none placeholder:text-white/35"
+                                  maxLength={200}
+                                  onChange={(event) =>
+                                    setOrderForm((current) => ({
+                                      ...current,
+                                      products: current.products.map(
+                                        (item, itemIndex) =>
+                                          itemIndex === index
+                                            ? {
+                                                ...item,
+                                                name: event.target.value,
+                                              }
+                                            : item,
+                                      ),
+                                    }))
+                                  }
+                                  placeholder="P.sh. Pako ushqimore"
+                                  required
+                                  value={product.name}
+                                />
+                              </span>
+                            </label>
+                            <label className="type-input block">
+                              Çmimi (ALL)
+                              <input
+                                className="business-input mt-2 h-12 w-full rounded-xl border px-3"
+                                min="0.01"
+                                max="9999999"
+                                onChange={(event) =>
+                                  setOrderForm((current) => ({
+                                    ...current,
+                                    products: current.products.map(
+                                      (item, itemIndex) =>
+                                        itemIndex === index
+                                          ? {
+                                              ...item,
+                                              price: event.target.value,
+                                            }
+                                          : item,
+                                    ),
+                                  }))
+                                }
+                                placeholder="P.sh. 1500"
+                                required
+                                step="0.01"
+                                type="number"
+                                value={product.price}
+                              />
+                            </label>
+                            {orderForm.products.length > 1 ? (
+                              <button
+                                aria-label={`Hiq produktin ${index + 1}`}
+                                className="mt-8 flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 text-white/60 hover:border-red-300/50 hover:text-red-200"
+                                onClick={() =>
+                                  setOrderForm((current) => ({
+                                    ...current,
+                                    products: current.products.filter(
+                                      (_, itemIndex) => itemIndex !== index,
+                                    ),
+                                  }))
+                                }
+                                title="Hiq produktin"
+                                type="button"
+                              >
+                                <X className="h-5 w-5" />
+                              </button>
+                            ) : (
+                              <span />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                    <label className="type-input block">
+                      Pershkrimi (opsional)
+                      <textarea
+                        className="business-input mt-2 min-h-24 w-full rounded-lg border p-3"
+                        maxLength={2000}
+                        value={orderForm.productDescription}
+                        onChange={(event) =>
+                          setOrderForm((current) => ({
+                            ...current,
+                            productDescription: event.target.value,
+                          }))
                         }
-                        onClick={createOrder}
-                        type="button"
-                      >
-                        <Send className="mr-2 h-5 w-5" />
-                        Krijo porosi
-                      </button>
+                      />
+                    </label>
+
+                    <div className="ops-quote grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
+                      <div>
+                        <p className="type-product">
+                          Vlera e mallit: {formatLek(productSubtotal)}
+                        </p>
+                        {orderQuote ? (
+                          <div
+                            className="mt-3 grid gap-2 sm:grid-cols-2"
+                            aria-live="polite"
+                          >
+                            <QuotePill
+                              label="Distanca"
+                              value={`${orderQuote.distanceKm.toFixed(3)} km`}
+                            />
+                            <QuotePill
+                              label="Jashte Zones 1"
+                              value={
+                                orderQuote.ringSurchargeApplied
+                                  ? formatLek(orderQuote.ringSurchargeFee)
+                                  : "Jo"
+                              }
+                            />
+                            <QuotePill
+                              label="Tarifa baze"
+                              value={formatLek(orderQuote.baseFee)}
+                            />
+                            <QuotePill
+                              label="Metra mbi 3 km"
+                              value={formatLek(orderQuote.extraDistanceFee)}
+                            />
+                            <QuotePill
+                              label="Transport i llogaritur"
+                              value={formatLek(
+                                orderQuote.calculatedTransportFee,
+                              )}
+                            />
+                            <QuotePill
+                              label={
+                                orderQuote.transportFeeOverridden
+                                  ? "Transport i ndryshuar"
+                                  : "Transport"
+                              }
+                              value={formatLek(orderQuote.finalTransportFee)}
+                            />
+                            <QuotePill
+                              label="Totali për pagesë"
+                              value={formatLek(
+                                productSubtotal + orderQuote.finalTransportFee,
+                              )}
+                            />
+                          </div>
+                        ) : (
+                          <p className="type-secondary mt-1 text-white/48">
+                            Transporti ende nuk eshte llogaritur.
+                          </p>
+                        )}
+                        <label className="type-input mt-3 block max-w-xs">
+                          Ndrysho tarifën manualisht
+                          <span className="mt-2 flex h-11 items-center rounded-xl border border-white/10 bg-black/18 px-3">
+                            <BadgeDollarSign className="mr-3 h-5 w-5 text-happy-orange" />
+                            <input
+                              className="w-full bg-transparent outline-none placeholder:text-white/35"
+                              onChange={(event) => {
+                                invalidateQuote();
+                                setOrderForm((current) => ({
+                                  ...current,
+                                  transportFeeOverride: event.target.value,
+                                }));
+                              }}
+                              placeholder="Opsionale"
+                              min="0"
+                              max="9999999"
+                              step="0.01"
+                              type="number"
+                              value={orderForm.transportFeeOverride}
+                            />
+                          </span>
+                        </label>
+                      </div>
+                      <div className="grid gap-2">
+                        <button
+                          className="type-cta flex h-12 items-center justify-center rounded-xl border border-white/10 bg-white/8 px-5 text-white disabled:opacity-55"
+                          disabled={busy || quoteLoading}
+                          onClick={quoteOrder}
+                          type="button"
+                        >
+                          <Calculator className="mr-2 h-5 w-5" />
+                          {quoteLoading ? "Po llogaritet" : "Llogarit faturën"}
+                        </button>
+                        <button
+                          className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange px-5 text-white happy-pill-shadow disabled:opacity-55"
+                          disabled={
+                            busy ||
+                            quoteLoading ||
+                            !orderQuote ||
+                            productSubtotal <= 0 ||
+                            orderingOpen !== true
+                          }
+                          type="submit"
+                        >
+                          <Send className="mr-2 h-5 w-5" />
+                          Krijo porosi
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  {message && (
-                    <p className="ops-notice" role="alert">
-                      {message}
-                    </p>
-                  )}
+                    {message && (
+                      <p className="ops-notice" role="alert">
+                        {message}
+                      </p>
+                    )}
 
-                  {dashboard ? (
-                    <BusinessRouteMap
-                      business={dashboard.business}
-                      quote={orderQuote}
-                    />
-                  ) : null}
+                    {dashboard ? (
+                      <BusinessRouteMap
+                        business={dashboard.business}
+                        quote={orderQuote}
+                      />
+                    ) : null}
+                  </fieldset>
                 </form>
               </section>
             </div>
@@ -997,53 +986,6 @@ export default function BusinessHome() {
               )}
             </section>
           )}
-          {view === "catalog" && (
-            <div className="ops-catalog">
-              <MenuManager
-                busy={busy}
-                categories={dashboard?.categories ?? []}
-                categoryEditForm={categoryEditForm}
-                categoryForm={categoryForm}
-                editForm={editForm}
-                editingCategoryId={editingCategoryId}
-                editingProductId={editingProductId}
-                onAddCategory={addCategory}
-                onAddProduct={addProduct}
-                onCancelCategory={cancelEditingCategory}
-                onCancelProduct={cancelEditing}
-                onCategoryEditFormChange={setCategoryEditForm}
-                onCategoryFormChange={setCategoryForm}
-                onEditCategory={startEditingCategory}
-                onEditProduct={startEditing}
-                onProductEditFormChange={setEditForm}
-                onProductFormChange={setProductForm}
-                onRemoveCategory={removeCategory}
-                onRemoveProduct={removeProduct}
-                onSaveCategory={saveCategory}
-                onSaveProduct={saveProduct}
-                productForm={productForm}
-                products={dashboard?.products ?? []}
-              />
-            </div>
-          )}
-          {view === "orders" && (
-            <div className="ops-section ops-section-heading">
-              <div>
-                <h2>Katalogu i biznesit</h2>
-                <p className="ops-subtle">
-                  {dashboard.products.length} produkte ne{" "}
-                  {dashboard.categories.length} kategori
-                </p>
-              </div>
-              <button
-                className="ops-link"
-                onClick={() => navigateView("catalog")}
-              >
-                Menaxho katalogun
-                <ArrowRight size={15} />
-              </button>
-            </div>
-          )}
         </>
       )}
     </OperationsShell>
@@ -1056,7 +998,11 @@ function IconField({
   value,
   onChange,
   placeholder,
+  required = false,
+  type = "text",
 }: {
+  required?: boolean;
+  type?: string;
   icon: typeof User;
   label: string;
   value: string;
@@ -1072,6 +1018,9 @@ function IconField({
           className="w-full bg-transparent outline-none placeholder:text-white/35"
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
+          required={required}
+          type={type}
+          maxLength={type === "tel" ? 25 : 200}
           value={value}
         />
       </span>
@@ -1135,155 +1084,6 @@ function AddressField({
         </div>
       ) : null}
     </label>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-}) {
-  return (
-    <label className="type-input block">
-      {label}
-      <input
-        className="business-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        value={value}
-      />
-    </label>
-  );
-}
-
-function ProductPicker({
-  products,
-  items,
-  subtotal,
-  onChange,
-}: {
-  products: BusinessProduct[];
-  items: Record<string, number>;
-  subtotal: number;
-  onChange: (productId: string, delta: number) => void;
-}) {
-  const groupedProducts = products.reduce<Record<string, BusinessProduct[]>>(
-    (groups, product) => {
-      const key = product.section ?? "Menu";
-      return {
-        ...groups,
-        [key]: [...(groups[key] ?? []), product],
-      };
-    },
-    {},
-  );
-  const selectedCount = Object.values(items).reduce(
-    (sum, quantity) => sum + quantity,
-    0,
-  );
-
-  return (
-    <section>
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <p className="type-input">Produktet e porosisë</p>
-          <p className="type-secondary mt-1 text-white/45">
-            {products.length} produkte ne katalog.
-          </p>
-        </div>
-        <span className="type-badge rounded-full bg-white/10 px-3 py-2 text-white/62">
-          {selectedCount} artikuj
-        </span>
-      </div>
-
-      {products.length ? (
-        <div className="mt-3 max-h-[360px] space-y-4 overflow-auto pr-1">
-          {Object.entries(groupedProducts).map(([section, sectionProducts]) => (
-            <div key={section}>
-              <p className="type-badge mb-2 uppercase tracking-wide text-white/38">
-                {section}
-              </p>
-              <div className="grid gap-2">
-                {sectionProducts.map((product) => {
-                  const quantity = items[product.id] ?? 0;
-                  return (
-                    <article
-                      className={`business-soft grid grid-cols-[52px_1fr] items-center gap-3 rounded-2xl border p-3 transition sm:grid-cols-[52px_1fr_auto] ${
-                        quantity > 0 ? "border-happy-orange/55" : ""
-                      }`}
-                      key={product.id}
-                    >
-                      <img
-                        alt={product.name}
-                        className="h-[52px] w-[52px] rounded-2xl object-cover"
-                        src={product.imageUrl ?? defaultProductImage}
-                      />
-                      <div className="min-w-0">
-                        <h3 className="type-product truncate">
-                          {product.name}
-                        </h3>
-                        <p className="type-secondary truncate text-white/42">
-                          {product.description ?? section}
-                        </p>
-                        <strong className="type-price text-happy-orange">
-                          {formatLek(product.price)}
-                        </strong>
-                      </div>
-                      <div className="col-span-2 flex items-center justify-end gap-2 sm:col-span-1">
-                        {quantity > 0 ? (
-                          <button
-                            className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/70"
-                            aria-label={`Hiq nje ${product.name}`}
-                            title="Ul sasine"
-                            onClick={() => onChange(product.id, -1)}
-                            type="button"
-                          >
-                            <Minus className="h-4 w-4" />
-                          </button>
-                        ) : null}
-                        <span className="type-price min-w-5 text-center">
-                          {quantity || ""}
-                        </span>
-                        <button
-                          className="grid h-9 w-9 place-items-center rounded-xl bg-happy-orange text-white"
-                          aria-label={`Shto nje ${product.name}`}
-                          title="Rrit sasine"
-                          onClick={() => onChange(product.id, 1)}
-                          type="button"
-                        >
-                          <Plus className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-3 rounded-2xl border border-dashed border-white/10 p-5 text-center">
-          <p className="type-body text-white/45">
-            Shto produkte te menuja e biznesit, pastaj zgjidhi këtu për porosi.
-          </p>
-        </div>
-      )}
-
-      <div className="mt-3 flex items-center justify-between rounded-2xl bg-black/18 p-3">
-        <span className="type-secondary text-white/48">
-          Totali i produkteve
-        </span>
-        <strong className="type-large-price text-happy-orange">
-          {formatLek(subtotal)}
-        </strong>
-      </div>
-    </section>
   );
 }
 
@@ -1502,470 +1302,6 @@ function formatDate(value: string) {
   } catch {
     return "";
   }
-}
-
-function MenuManager(props: {
-  categories: BusinessCategory[];
-  products: BusinessProduct[];
-  busy: boolean;
-  categoryForm: { name: string };
-  categoryEditForm: { name: string };
-  productForm: {
-    name: string;
-    description: string;
-    price: string;
-    section: string;
-  };
-  editForm: {
-    name: string;
-    description: string;
-    price: string;
-    section: string;
-    imageUrl: string;
-  };
-  editingCategoryId: string | null;
-  editingProductId: string | null;
-  onCategoryFormChange: (form: { name: string }) => void;
-  onCategoryEditFormChange: (form: { name: string }) => void;
-  onProductFormChange: (form: {
-    name: string;
-    description: string;
-    price: string;
-    section: string;
-  }) => void;
-  onProductEditFormChange: (form: {
-    name: string;
-    description: string;
-    price: string;
-    section: string;
-    imageUrl: string;
-  }) => void;
-  onAddCategory: () => void;
-  onAddProduct: () => void;
-  onEditCategory: (category: BusinessCategory) => void;
-  onSaveCategory: (categoryId: string) => void;
-  onCancelCategory: () => void;
-  onRemoveCategory: (categoryId: string) => void;
-  onEditProduct: (product: BusinessProduct) => void;
-  onSaveProduct: (productId: string) => void;
-  onCancelProduct: () => void;
-  onRemoveProduct: (productId: string) => void;
-}) {
-  return (
-    <>
-      <section className="business-panel rounded-3xl border p-5 shadow-happy">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="type-badge uppercase tracking-wide text-happy-orange">
-              Kategoritë
-            </p>
-            <h2 className="type-section-title mt-1">Menu e biznesit</h2>
-          </div>
-          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-happy-orange/15 text-happy-orange">
-            <Store className="h-5 w-5" />
-          </span>
-        </div>
-
-        <form
-          className="mt-5 grid gap-3"
-          onSubmit={(event) => event.preventDefault()}
-        >
-          <Field
-            label="Kategori e re"
-            onChange={(value) => props.onCategoryFormChange({ name: value })}
-            placeholder="P.sh. Dreka"
-            value={props.categoryForm.name}
-          />
-          <button
-            className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange text-white happy-pill-shadow"
-            disabled={props.busy}
-            onClick={props.onAddCategory}
-            type="button"
-          >
-            <Plus className="mr-2 h-5 w-5" />
-            Shto kategori
-          </button>
-        </form>
-
-        <div className="mt-5 space-y-3">
-          {props.categories.length ? (
-            props.categories.map((category) => (
-              <CategoryCard
-                busy={props.busy}
-                category={category}
-                editForm={props.categoryEditForm}
-                editing={props.editingCategoryId === category.id}
-                key={category.id}
-                onCancel={props.onCancelCategory}
-                onEdit={() => props.onEditCategory(category)}
-                onEditFormChange={props.onCategoryEditFormChange}
-                onRemove={() => props.onRemoveCategory(category.id)}
-                onSave={() => props.onSaveCategory(category.id)}
-              />
-            ))
-          ) : (
-            <EmptyState text="Shto kategorinë e parë për menunë." />
-          )}
-        </div>
-      </section>
-
-      <section className="business-panel rounded-3xl border p-5 shadow-happy">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="type-badge uppercase tracking-wide text-happy-orange">
-              Produkte
-            </p>
-            <h2 className="type-section-title mt-1">Shto produkt</h2>
-          </div>
-          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-happy-orange/15 text-happy-orange">
-            <PackagePlus className="h-5 w-5" />
-          </span>
-        </div>
-
-        <form
-          className="mt-5 grid gap-3"
-          onSubmit={(event) => event.preventDefault()}
-        >
-          <Field
-            label="Emri"
-            onChange={(value) =>
-              props.onProductFormChange({ ...props.productForm, name: value })
-            }
-            placeholder="P.sh. Paketë marketi"
-            value={props.productForm.name}
-          />
-          <Field
-            label="Përshkrimi"
-            onChange={(value) =>
-              props.onProductFormChange({
-                ...props.productForm,
-                description: value,
-              })
-            }
-            placeholder="Detaje të shkurtra"
-            value={props.productForm.description}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <Field
-              label="Çmimi"
-              onChange={(value) =>
-                props.onProductFormChange({
-                  ...props.productForm,
-                  price: value,
-                })
-              }
-              placeholder="650"
-              value={props.productForm.price}
-            />
-            <CategorySelect
-              categories={props.categories}
-              label="Kategoria"
-              onChange={(value) =>
-                props.onProductFormChange({
-                  ...props.productForm,
-                  section: value,
-                })
-              }
-              value={props.productForm.section}
-            />
-          </div>
-          <button
-            className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange text-white happy-pill-shadow disabled:opacity-55"
-            disabled={props.busy || !props.categories.length}
-            onClick={props.onAddProduct}
-            type="button"
-          >
-            <Plus className="mr-2 h-5 w-5" />
-            Shto produkt
-          </button>
-        </form>
-      </section>
-
-      <section className="business-panel rounded-3xl border p-5 shadow-happy">
-        <div className="flex items-end justify-between">
-          <div>
-            <p className="type-badge uppercase tracking-wide text-happy-orange">
-              Lista
-            </p>
-            <h2 className="type-section-title mt-1">Produkte aktive</h2>
-          </div>
-          <span className="type-secondary text-white/45">
-            {props.products.length}
-          </span>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {props.products.length ? (
-            props.products.map((product) => (
-              <ProductCard
-                busy={props.busy}
-                categories={props.categories}
-                editForm={props.editForm}
-                editing={props.editingProductId === product.id}
-                key={product.id}
-                onCancel={props.onCancelProduct}
-                onEdit={() => props.onEditProduct(product)}
-                onEditFormChange={props.onProductEditFormChange}
-                onRemove={() => props.onRemoveProduct(product.id)}
-                onSave={() => props.onSaveProduct(product.id)}
-                product={product}
-              />
-            ))
-          ) : (
-            <EmptyState text="Nuk ka produkte aktive." />
-          )}
-        </div>
-      </section>
-    </>
-  );
-}
-
-function CategorySelect({
-  label,
-  value,
-  onChange,
-  categories,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  categories: BusinessCategory[];
-}) {
-  return (
-    <label className="type-input block">
-      {label}
-      <select
-        className="business-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
-        disabled={categories.length === 0}
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
-      >
-        {categories.length === 0 ? (
-          <option className="bg-[#101010]" value="">
-            Shto kategori
-          </option>
-        ) : null}
-        {categories.map((category) => (
-          <option
-            className="bg-[#101010]"
-            key={category.id}
-            value={category.name}
-          >
-            {category.name}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function ProductCard({
-  product,
-  editing,
-  editForm,
-  categories,
-  busy,
-  onEdit,
-  onSave,
-  onCancel,
-  onRemove,
-  onEditFormChange,
-}: {
-  product: BusinessProduct;
-  editing: boolean;
-  editForm: {
-    name: string;
-    description: string;
-    price: string;
-    section: string;
-    imageUrl: string;
-  };
-  categories: BusinessCategory[];
-  busy: boolean;
-  onEdit: () => void;
-  onSave: () => void;
-  onCancel: () => void;
-  onRemove: () => void;
-  onEditFormChange: (form: {
-    name: string;
-    description: string;
-    price: string;
-    section: string;
-    imageUrl: string;
-  }) => void;
-}) {
-  if (editing) {
-    return (
-      <article className="business-soft rounded-2xl border p-3">
-        <div className="grid gap-3">
-          <Field
-            label="Emri"
-            onChange={(value) => onEditFormChange({ ...editForm, name: value })}
-            placeholder="Emri i produktit"
-            value={editForm.name}
-          />
-          <Field
-            label="Përshkrimi"
-            onChange={(value) =>
-              onEditFormChange({ ...editForm, description: value })
-            }
-            placeholder="Përshkrim i shkurtër"
-            value={editForm.description}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <Field
-              label="Çmimi"
-              onChange={(value) =>
-                onEditFormChange({ ...editForm, price: value })
-              }
-              placeholder="650"
-              value={editForm.price}
-            />
-            <CategorySelect
-              categories={categories}
-              label="Kategoria"
-              onChange={(value) =>
-                onEditFormChange({ ...editForm, section: value })
-              }
-              value={editForm.section}
-            />
-          </div>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <button
-            className="type-cta flex h-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/70"
-            disabled={busy}
-            onClick={onCancel}
-            type="button"
-          >
-            <X className="mr-2 h-4 w-4" />
-            Anulo
-          </button>
-          <button
-            className="type-cta flex h-11 items-center justify-center rounded-xl bg-happy-orange text-white"
-            disabled={busy}
-            onClick={onSave}
-            type="button"
-          >
-            <Save className="mr-2 h-4 w-4" />
-            Ruaj
-          </button>
-        </div>
-      </article>
-    );
-  }
-
-  return (
-    <article className="business-soft grid grid-cols-[56px_1fr_auto] items-center gap-3 rounded-2xl border p-3">
-      <img
-        alt={product.name}
-        className="h-14 w-14 rounded-2xl object-cover"
-        src={product.imageUrl ?? defaultProductImage}
-      />
-      <div className="min-w-0">
-        <h3 className="type-product truncate">{product.name}</h3>
-        <p className="type-secondary truncate text-white/45">
-          {product.section ?? "Menu"}
-        </p>
-        <strong className="type-price text-happy-orange">
-          {formatLek(product.price)}
-        </strong>
-      </div>
-      <div className="grid gap-2">
-        <IconButton busy={busy} icon={Pencil} onClick={onEdit} />
-        <IconButton busy={busy} icon={Trash2} onClick={onRemove} />
-      </div>
-    </article>
-  );
-}
-
-function CategoryCard({
-  category,
-  editing,
-  editForm,
-  busy,
-  onEdit,
-  onSave,
-  onCancel,
-  onRemove,
-  onEditFormChange,
-}: {
-  category: BusinessCategory;
-  editing: boolean;
-  editForm: { name: string };
-  busy: boolean;
-  onEdit: () => void;
-  onSave: () => void;
-  onCancel: () => void;
-  onRemove: () => void;
-  onEditFormChange: (form: { name: string }) => void;
-}) {
-  if (editing) {
-    return (
-      <article className="business-soft rounded-2xl border p-3">
-        <Field
-          label="Emri"
-          onChange={(value) => onEditFormChange({ ...editForm, name: value })}
-          placeholder="Emri"
-          value={editForm.name}
-        />
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <button
-            className="type-cta flex h-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/70"
-            disabled={busy}
-            onClick={onCancel}
-            type="button"
-          >
-            Anulo
-          </button>
-          <button
-            className="type-cta flex h-11 items-center justify-center rounded-xl bg-happy-orange text-white"
-            disabled={busy}
-            onClick={onSave}
-            type="button"
-          >
-            Ruaj
-          </button>
-        </div>
-      </article>
-    );
-  }
-
-  return (
-    <article className="business-soft flex items-center justify-between gap-3 rounded-2xl border p-3">
-      <div className="min-w-0">
-        <h3 className="type-product truncate">{category.name}</h3>
-        <p className="type-secondary text-white/45">
-          {category.productCount} produkte
-        </p>
-      </div>
-      <div className="flex gap-2">
-        <IconButton busy={busy} icon={Pencil} onClick={onEdit} />
-        <IconButton busy={busy} icon={Trash2} onClick={onRemove} />
-      </div>
-    </article>
-  );
-}
-
-function IconButton({
-  icon: Icon,
-  busy,
-  onClick,
-}: {
-  icon: typeof Pencil;
-  busy: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white/58 hover:text-happy-orange"
-      disabled={busy}
-      onClick={onClick}
-      type="button"
-    >
-      <Icon className="h-4 w-4" />
-    </button>
-  );
 }
 
 function EmptyState({ text }: { text: string }) {

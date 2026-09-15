@@ -38,7 +38,10 @@ export function getEstimatedRoadRoute(input: RouteInput) {
   ];
   const straightLineMeters = points
     .slice(1)
-    .reduce((total, point, index) => total + distanceBetween(points[index], point), 0);
+    .reduce(
+      (total, point, index) => total + distanceBetween(points[index], point),
+      0,
+    );
   const distanceMeters = Math.round(straightLineMeters * 1.2);
 
   return {
@@ -49,9 +52,16 @@ export function getEstimatedRoadRoute(input: RouteInput) {
   };
 }
 
-export async function getGoogleRoadRoute(apiKey: string, input: RouteInput) {
-  if (!apiKey || apiKey.toLowerCase().includes("replace-with"))
+export async function getGoogleRoadRoute(
+  apiKey: string,
+  input: RouteInput,
+  options: { allowEstimate?: boolean } = {},
+) {
+  if (!apiKey || apiKey.toLowerCase().includes("replace-with")) {
+    if (options.allowEstimate === false)
+      throw new Error("GOOGLE_DIRECTIONS_API_KEY_REQUIRED");
     return getEstimatedRoadRoute(input);
+  }
   try {
     const response = await fetch(
       "https://routes.googleapis.com/directions/v2:computeRoutes",
@@ -127,6 +137,14 @@ export async function getGoogleRoadRoute(apiKey: string, input: RouteInput) {
       source: "GOOGLE_ROUTES_SHORTEST_ROAD_IGNORE_TRAFFIC",
     };
   } catch (error) {
+    if (options.allowEstimate === false) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("GOOGLE_DIRECTIONS_")
+      )
+        throw error;
+      throw new Error("GOOGLE_DIRECTIONS_REQUEST_FAILED");
+    }
     return getEstimatedRoadRoute(input);
   }
 }

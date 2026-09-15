@@ -5,18 +5,19 @@ import {
   Map,
   Pentagon,
   Plus,
+  Pencil,
   RotateCcw,
   Save,
   Trash2,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { ZoneBuilderMap } from "../../components/admin-map";
 import { AdminMetric, AdminShell } from "../../components/admin-shell";
 import {
   ApiError,
   createAdminZone,
   deleteAdminZone,
-  formatLek,
+  updateAdminZone,
   getAdminZones,
   type AdminZone,
   type MapPoint,
@@ -27,9 +28,9 @@ export default function ZonesPage() {
   const [points, setPoints] = useState<MapPoint[]>([]);
   const [name, setName] = useState("");
   const [city, setCity] = useState("Tirana");
-  const [transportFee, setTransportFee] = useState("250");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [active, setActive] = useState(true);
   const [isSurchargeArea, setIsSurchargeArea] = useState(false);
-  const [surchargeFee, setSurchargeFee] = useState("100");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingZoneId, setDeletingZoneId] = useState<string | null>(null);
@@ -52,12 +53,31 @@ export default function ZonesPage() {
     void loadZones();
   }, []);
 
-  const minFee = useMemo(() => {
-    const fees = zones
-      .filter((zone) => zone.active)
-      .map((zone) => zone.transportFee);
-    return fees.length ? Math.min(...fees) : 0;
-  }, [zones]);
+  function resetForm() {
+    setEditingId(null);
+    setName("");
+    setCity("Tirana");
+    setActive(true);
+    setIsSurchargeArea(false);
+    setPoints([]);
+  }
+
+  function editZone(zone: AdminZone) {
+    setEditingId(zone.id);
+    setName(zone.name);
+    setCity(zone.city || "Tirana");
+    setActive(zone.active);
+    setIsSurchargeArea(zone.isSurchargeArea);
+    const vertices = [...zone.points];
+    if (
+      vertices.length > 3 &&
+      vertices[0].lat === vertices.at(-1)?.lat &&
+      vertices[0].lng === vertices.at(-1)?.lng
+    )
+      vertices.pop();
+    setPoints(vertices);
+    setMessage("");
+  }
 
   async function submitZone(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,19 +89,18 @@ export default function ZonesPage() {
     setSaving(true);
     setMessage("");
     try {
-      await createAdminZone({
+      const input = {
         name,
         city,
-        transportFee: Number(transportFee),
         isSurchargeArea,
-        surchargeFee: Number(surchargeFee),
+        active,
         points,
-      });
-      setName("");
-      setTransportFee("250");
-      setIsSurchargeArea(false);
-      setSurchargeFee("100");
-      setPoints([]);
+        transportFee: 300,
+        surchargeFee: 100,
+      };
+      if (editingId) await updateAdminZone(editingId, input);
+      else await createAdminZone(input);
+      resetForm();
       await loadZones();
       setMessage(
         "Zona u ruajt me sukses dhe është gati për llogaritjen e transportit.",
@@ -128,11 +147,7 @@ export default function ZonesPage() {
       action={
         <button
           className="type-cta flex h-12 items-center justify-center rounded-xl bg-happy-orange px-5 text-white happy-pill-shadow"
-          onClick={() =>
-            setMessage(
-              "Kliko ne harte per te vendosur pikat e zones, pastaj ruaje nga paneli majtas.",
-            )
-          }
+          onClick={resetForm}
           type="button"
         >
           <Plus className="mr-2 h-5 w-5" />
@@ -156,8 +171,10 @@ export default function ZonesPage() {
         />
         <AdminMetric
           icon={Layers3}
-          label="Cmimi min"
-          value={minFee ? formatLek(minFee) : "0 ALL"}
+          label="Zona 1 aktive"
+          value={String(
+            zones.filter((zone) => zone.active && zone.isSurchargeArea).length,
+          )}
         />
       </section>
 
@@ -169,9 +186,11 @@ export default function ZonesPage() {
 
       <section className="grid gap-5 lg:grid-cols-[360px_1fr]">
         <aside className="admin-panel rounded-3xl border p-5 shadow-happy">
-          <h2 className="type-section-title">Ndertues zone</h2>
+          <h2 className="type-section-title">
+            {editingId ? "Ndrysho zonen" : "Zone e re"}
+          </h2>
           <p className="type-body mt-2 text-white/58">
-            Vizato kufijte, vendos emrin dhe cakto tarifen fikse te transportit.
+            300 ALL deri ne 3 km; 0.1 ALL per meter shtese.
           </p>
           <form className="mt-5 grid gap-3" onSubmit={submitZone}>
             <label className="type-input block">
@@ -195,41 +214,31 @@ export default function ZonesPage() {
               />
             </label>
             <label className="type-input block">
-              Transporti reference
-              <input
-                className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
-                onChange={(event) => setTransportFee(event.target.value)}
-                placeholder="250 ALL"
-                required
-                value={transportFee}
-              />
+              Lloji i zones
+              <select
+                className="admin-input mt-2 h-12 w-full rounded-xl border px-3"
+                value={isSurchargeArea ? "tariff" : "coverage"}
+                onChange={(event) =>
+                  setIsSurchargeArea(event.target.value === "tariff")
+                }
+              >
+                <option value="tariff">Zona 1 - Tarifa</option>
+                <option value="coverage">Zona 2 - Mbulimi</option>
+              </select>
             </label>
-            <label className="admin-soft flex items-center justify-between gap-3 rounded-2xl border p-4">
-              <span>
-                <span className="type-product block">Area shtese / Unaza</span>
-                <span className="type-secondary text-white/45">
-                  Shto tarife kur rruga e porosise e kalon kete poligon.
-                </span>
-              </span>
+            <p className="type-secondary text-white/60">
+              {isSurchargeArea
+                ? "Destinacion jashte zones: +100 ALL."
+                : "Biznesi dhe destinacioni duhet te jene brenda mbulimit."}
+            </p>
+            <label className="flex items-center gap-3">
               <input
-                checked={isSurchargeArea}
-                className="h-5 w-5 accent-happy-orange"
-                onChange={(event) => setIsSurchargeArea(event.target.checked)}
                 type="checkbox"
+                checked={active}
+                onChange={(event) => setActive(event.target.checked)}
               />
+              Zone aktive
             </label>
-            {isSurchargeArea ? (
-              <label className="type-input block">
-                Tarifa shtese
-                <input
-                  className="admin-input mt-2 h-12 w-full rounded-xl border px-3 outline-none focus:border-white/35"
-                  onChange={(event) => setSurchargeFee(event.target.value)}
-                  placeholder="100 ALL"
-                  required
-                  value={surchargeFee}
-                />
-              </label>
-            ) : null}
             <div className="admin-soft rounded-2xl border p-4">
               <p className="type-badge uppercase tracking-wide text-white/42">
                 Pika te zgjedhura
@@ -275,10 +284,17 @@ export default function ZonesPage() {
                     <p className="type-body">{zone.name}</p>
                     <div className="flex items-center gap-2">
                       <span className="type-badge rounded-full bg-happy-orange/15 px-2 py-1 text-happy-orange">
-                        {zone.isSurchargeArea
-                          ? `+${formatLek(zone.surchargeFee)}`
-                          : formatLek(zone.transportFee)}
+                        {zone.isSurchargeArea ? "Zona 1" : "Zona 2"}
                       </span>
+                      <button
+                        type="button"
+                        title="Ndrysho zonen"
+                        aria-label={`Ndrysho ${zone.name}`}
+                        onClick={() => editZone(zone)}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
                       <button
                         aria-label={`Fshi zonën ${zone.name}`}
                         className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-400/35 text-red-300 transition hover:bg-red-400/15"
@@ -293,7 +309,7 @@ export default function ZonesPage() {
                   </div>
                   <p className="type-secondary mt-1 text-white/45">
                     {zone.points.length} pika · {zone.city}
-                    {zone.isSurchargeArea ? " · Area shtese" : ""}
+                    {zone.active ? " · Aktive" : " · Joaktive"}
                   </p>
                 </article>
               ))}
@@ -305,7 +321,7 @@ export default function ZonesPage() {
           <ZoneBuilderMap
             onPointsChange={setPoints}
             points={points}
-            zones={zones}
+            zones={zones.filter((zone) => zone.active && zone.id !== editingId)}
           />
         </section>
       </section>

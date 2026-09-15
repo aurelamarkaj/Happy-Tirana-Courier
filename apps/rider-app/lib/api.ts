@@ -273,7 +273,7 @@ export function logoutRider() {
 
 export function formatLek(value: number) {
   return (
-    new Intl.NumberFormat("sq-AL", { maximumFractionDigits: 0 }).format(value) +
+    new Intl.NumberFormat("sq-AL", { maximumFractionDigits: 2 }).format(value) +
     " ALL"
   );
 }

@@ -10,6 +10,13 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import { getGoogleRoadRoute, type RouteInput } from "./google-routes.js";
 import { buildItinerary } from "./rider-itinerary.js";
+import {
+  businessOrderSchema,
+  businessQuoteSchema,
+  assertOrderingOpen,
+  getOrderWindow,
+  calculateBusinessTransportQuote as calculateQuote,
+} from "./business-orders.js";
 
 dotenv.config({
   path: fileURLToPath(new URL("../../../.env", import.meta.url)),
@@ -64,8 +71,7 @@ const adminUnassignedAlertMinutes = Number(
   process.env.ADMIN_UNASSIGNED_ALERT_MINUTES ?? 5,
 );
 const longDistanceThresholdMeters = 3000;
-const baseTransportFeeAll = 300;
-const extraMeterFeeAll = 0.1;
+
 const ringSurchargeDefaultAll = 100;
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim() ?? "";
 const googleMapsHttpReferrer =
@@ -94,6 +100,24 @@ io.on("connection", (socket) => {
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "happy-tirana-api" });
 });
+
+app.get("/businesses/order-window", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(getOrderWindow());
+});
+
+function orderingHours(
+  _req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  try {
+    assertOrderingOpen();
+    next();
+  } catch {
+    res.status(409).json({ error: "ORDERING_CLOSED", ...getOrderWindow() });
+  }
+}
 
 function hashPassword(
   password: string,
@@ -222,90 +246,9 @@ async function getRouteDistanceMeters(input: RouteInput) {
 
 async function calculateBusinessTransportQuote(
   client: PoolClient,
-  input: {
-    businessId: string;
-    lat: number;
-    lng: number;
-    googleMapsUrl?: string | null;
-    transportFeeOverride?: number;
-  },
+  input: Parameters<typeof calculateQuote>[2],
 ) {
-  const business = await client.query(
-    `SELECT id,
-            COALESCE(lat, 41.3275)::numeric AS lat,
-            COALESCE(lng, 19.8187)::numeric AS lng
-     FROM businesses
-     WHERE id = $1
-       AND status = 'ACTIVE'`,
-    [input.businessId],
-  );
-  if (!business.rows[0]) throw new Error("BUSINESS_NOT_FOUND");
-
-  const zoneResult = await client.query(
-    "SELECT * FROM resolve_zone_for_point($1, $2)",
-    [input.lat, input.lng],
-  );
-  const zone = zoneResult.rows[0];
-  if (!zone) throw new Error("DELIVERY_ZONE_NOT_FOUND");
-
-  const originLat = Number(business.rows[0].lat);
-  const originLng = Number(business.rows[0].lng);
-  const route = await getRouteDistanceMeters({
-    originLat,
-    originLng,
-    destinationLat: input.lat,
-    destinationLng: input.lng,
-  });
-  const extraMeters = Math.max(
-    0,
-    route.distanceMeters - longDistanceThresholdMeters,
-  );
-  const distanceFee = roundMoney(
-    baseTransportFeeAll + extraMeters * extraMeterFeeAll,
-  );
-
-  const surcharge = await client.query(
-    `SELECT COALESCE(SUM(surcharge_fee), 0)::numeric AS fee,
-            COUNT(*)::int AS zones
-     FROM zones
-     WHERE active = true
-       AND is_surcharge_area = true
-       AND ST_Intersects(
-         polygon,
-         ST_SetSRID(ST_MakeLine(ST_MakePoint($1, $2), ST_MakePoint($3, $4)), 4326)
-       )`,
-    [originLng, originLat, input.lng, input.lat],
-  );
-  const ringSurchargeFee = Number(surcharge.rows[0]?.fee ?? 0);
-  const calculatedTransportFee = roundMoney(
-    distanceFee + (ringSurchargeFee || 0),
-  );
-  const hasOverride =
-    input.transportFeeOverride !== undefined &&
-    Number.isFinite(input.transportFeeOverride);
-  const finalTransportFee = roundMoney(
-    hasOverride
-      ? Math.max(0, input.transportFeeOverride ?? 0)
-      : calculatedTransportFee,
-  );
-
-  return {
-    zoneId: zone.zone_id as string,
-    zoneName: zone.zone_name as string,
-    distanceMeters: route.distanceMeters,
-    distanceKm: roundMoney(route.distanceMeters / 1000),
-    distanceSource: route.source,
-    calculatedTransportFee,
-    finalTransportFee,
-    transportFeeOverridden: hasOverride,
-    ringSurchargeApplied: ringSurchargeFee > 0,
-    ringSurchargeFee: roundMoney(ringSurchargeFee || 0),
-    routePreference:
-      route.source === "HAVERSINE_ROAD_ESTIMATE_FALLBACK"
-        ? "ESTIMATED_ROAD_DISTANCE_FALLBACK"
-        : "SHORTEST_ROAD_IGNORE_TRAFFIC",
-    googleMapsUrl: input.googleMapsUrl?.trim() || null,
-  };
+  return calculateQuote(client, googleMapsApiKey, input);
 }
 
 function mapCustomer(row: Record<string, unknown>) {
@@ -1615,54 +1558,80 @@ app.get("/admin/zones", async (_req, res, next) => {
   }
 });
 
-app.post("/admin/zones", async (req, res, next) => {
+const zoneSchema = z.object({
+  name: z.string().trim().min(2).max(150),
+  city: z.string().trim().max(100).optional(),
+  isSurchargeArea: z.boolean().default(false),
+  active: z.boolean().default(true),
+  points: z
+    .array(
+      z.object({
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180),
+      }),
+    )
+    .min(3)
+    .max(500),
+});
+
+async function saveZone(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
   try {
-    const body = z
-      .object({
-        name: z.string().min(2),
-        city: z.string().min(2).optional().or(z.literal("")),
-        transportFee: z.coerce.number().min(0),
-        isSurchargeArea: z.boolean().optional(),
-        surchargeFee: z.coerce.number().min(0).optional(),
-        points: z.array(z.object({ lat: z.number(), lng: z.number() })).min(3),
-      })
-      .parse(req.body);
-
-    const closedPoints = [...body.points];
-    const first = closedPoints[0];
-    const last = closedPoints[closedPoints.length - 1];
-    if (first.lat !== last.lat || first.lng !== last.lng)
-      closedPoints.push(first);
-
-    const wkt = `POLYGON((${closedPoints.map((point) => `${point.lng} ${point.lat}`).join(", ")}))`;
-    const { rows } = await pool.query(
-      `INSERT INTO zones (name, city, transport_fee, polygon, active, is_surcharge_area, surcharge_fee)
-       VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromText($4), 4326), true, $5, $6)
-       RETURNING id,
-                 name,
-                 city,
-                 transport_fee,
-                 is_surcharge_area,
-                 surcharge_fee,
-                 active,
-                 created_at,
-                 ST_AsGeoJSON(polygon)::json AS geometry`,
-      [
-        body.name.trim(),
-        body.city?.trim() || "Tirana",
-        body.transportFee,
-        wkt,
-        body.isSurchargeArea ?? false,
-        body.surchargeFee ?? ringSurchargeDefaultAll,
-      ],
+    const body = zoneSchema.parse(req.body);
+    const id = req.params.id ? z.string().uuid().parse(req.params.id) : null;
+    const points = [...body.points];
+    const first = points[0],
+      last = points[points.length - 1];
+    if (first.lat !== last.lat || first.lng !== last.lng) points.push(first);
+    const geometry = JSON.stringify({
+      type: "Polygon",
+      coordinates: [points.map((p) => [p.lng, p.lat])],
+    });
+    const valid = await pool.query(
+      "SELECT ST_IsValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS valid",
+      [geometry],
     );
-
-    io.to("admin").emit("zone.created", { zoneId: rows[0].id });
-    res.status(201).json({ zone: mapAdminZone(rows[0]) });
+    if (!valid.rows[0]?.valid) {
+      res.status(422).json({ error: "INVALID_ZONE_POLYGON" });
+      return;
+    }
+    const values = [
+      body.name,
+      body.city || "Tirana",
+      geometry,
+      body.isSurchargeArea,
+      body.active,
+    ];
+    const returning =
+      "RETURNING id, name, city, transport_fee, is_surcharge_area, surcharge_fee, active, created_at, ST_AsGeoJSON(polygon)::json AS geometry";
+    const result = id
+      ? await pool.query(
+          `UPDATE zones SET name=$1, city=$2, polygon=ST_SetSRID(ST_GeomFromGeoJSON($3),4326),
+          is_surcharge_area=$4, active=$5, transport_fee=300, surcharge_fee=100 WHERE id=$6 ${returning}`,
+          [...values, id],
+        )
+      : await pool.query(
+          `INSERT INTO zones (name, city, polygon, is_surcharge_area, active, transport_fee, surcharge_fee)
+          VALUES ($1,$2,ST_SetSRID(ST_GeomFromGeoJSON($3),4326),$4,$5,300,100) ${returning}`,
+          values,
+        );
+    if (!result.rows[0]) {
+      res.status(404).json({ error: "ZONE_NOT_FOUND" });
+      return;
+    }
+    io.to("admin").emit(id ? "zone.updated" : "zone.created", {
+      zoneId: result.rows[0].id,
+    });
+    res.status(id ? 200 : 201).json({ zone: mapAdminZone(result.rows[0]) });
   } catch (error) {
     next(error);
   }
-});
+}
+app.post("/admin/zones", saveZone);
+app.patch("/admin/zones/:id", saveZone);
 
 app.delete("/admin/zones/:id", async (req, res, next) => {
   const client = await pool.connect();
@@ -2476,37 +2445,27 @@ app.get("/businesses/:id/dashboard", async (req, res, next) => {
       return;
     }
 
-    const products = await pool.query(
-      `SELECT p.id,
-              p.name,
-              p.description,
-              p.price,
-              p.image_url,
-              p.is_available,
-              p.created_at,
-              pc.name AS section
-       FROM products p
-       LEFT JOIN product_categories pc ON pc.id = p.category_id AND pc.active = true
-       WHERE p.business_id = $1
-         AND p.is_available = true
-       ORDER BY pc.sort_order NULLS LAST, p.sort_order, p.created_at DESC`,
-      [params.id],
-    );
-
-    const categories = await pool.query(
-      `SELECT pc.id,
-              pc.name,
-              pc.sort_order,
-              pc.active,
-              COUNT(p.id)::int AS product_count
-       FROM product_categories pc
-       LEFT JOIN products p ON p.category_id = pc.id AND p.is_available = true
-       WHERE pc.business_id = $1
-         AND pc.active = true
-       GROUP BY pc.id
-       ORDER BY pc.sort_order, pc.name`,
-      [params.id],
-    );
+    const businessRow = business.rows[0];
+    const storedLat = Number(businessRow.lat);
+    const storedLng = Number(businessRow.lng);
+    if (
+      (!Number.isFinite(storedLat) ||
+        !Number.isFinite(storedLng) ||
+        (Math.abs(storedLat) < 0.0001 && Math.abs(storedLng) < 0.0001)) &&
+      businessRow.address_text
+    ) {
+      const resolved = await resolveAddressTextLocation(
+        `${businessRow.address_text}, Tirana, Albania`,
+      );
+      if (resolved) {
+        await pool.query(
+          "UPDATE businesses SET lat = $2, lng = $3 WHERE id = $1",
+          [params.id, resolved.lat, resolved.lng],
+        );
+        businessRow.lat = resolved.lat;
+        businessRow.lng = resolved.lng;
+      }
+    }
 
     const orders = await pool.query(
       `SELECT o.id,
@@ -2560,25 +2519,31 @@ app.get("/businesses/:id/dashboard", async (req, res, next) => {
 
     const metricRow = metrics.rows[0];
 
+    const mapLat = Number(businessRow.lat);
+    const mapLng = Number(businessRow.lng);
     res.json({
       business: {
-        id: business.rows[0].id,
-        name: business.rows[0].name,
-        legalName: business.rows[0].legal_name,
-        phone: business.rows[0].phone,
-        email: business.rows[0].email,
-        addressText: business.rows[0].address_text,
-        lat: Number(business.rows[0].lat),
-        lng: Number(business.rows[0].lng),
-        status: business.rows[0].status,
-        category: business.rows[0].category,
-        rating: Number(business.rows[0].rating),
-        etaMinutes: Number(business.rows[0].eta_minutes),
-        coverImageUrl: business.rows[0].cover_image_url,
-        description: business.rows[0].description,
+        id: businessRow.id,
+        name: businessRow.name,
+        legalName: businessRow.legal_name,
+        phone: businessRow.phone,
+        email: businessRow.email,
+        addressText: businessRow.address_text,
+        lat:
+          Number.isFinite(mapLat) && Math.abs(mapLat) > 0.0001
+            ? mapLat
+            : 41.3275,
+        lng:
+          Number.isFinite(mapLng) && Math.abs(mapLng) > 0.0001
+            ? mapLng
+            : 19.8187,
+        status: businessRow.status,
+        category: businessRow.category,
+        rating: Number(businessRow.rating),
+        etaMinutes: Number(businessRow.eta_minutes),
+        coverImageUrl: businessRow.cover_image_url,
+        description: businessRow.description,
       },
-      categories: categories.rows.map(mapBusinessCategory),
-      products: products.rows.map(mapBusinessProduct),
       orders: orders.rows.map(mapBusinessDashboardOrder),
       metrics: {
         pendingOrders: Number(metricRow.pending_orders),
@@ -2598,15 +2563,7 @@ app.post("/businesses/:id/orders/quote", async (req, res, next) => {
 
   try {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z
-      .object({
-        addressText: z.string().optional().or(z.literal("")),
-        lat: z.coerce.number().optional(),
-        lng: z.coerce.number().optional(),
-        googleMapsUrl: z.string().optional().or(z.literal("")),
-        transportFeeOverride: z.coerce.number().min(0).optional(),
-      })
-      .parse(req.body);
+    const body = businessQuoteSchema.parse(req.body);
 
     const mapsLocation = await resolveGoogleMapsLink(body.googleMapsUrl);
     const textLocation =
@@ -2648,42 +2605,12 @@ app.post("/businesses/:id/orders/quote", async (req, res, next) => {
   }
 });
 
-app.post("/businesses/:id/orders", async (req, res, next) => {
+app.post("/businesses/:id/orders", orderingHours, async (req, res, next) => {
   const client = await pool.connect();
 
   try {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z
-      .object({
-        customerName: z.string().min(2),
-        customerPhone: z.string().min(6),
-        addressText: z.string().optional().or(z.literal("")),
-        lat: z.coerce.number().optional(),
-        lng: z.coerce.number().optional(),
-        googleMapsUrl: z.string().optional().or(z.literal("")),
-        readyMinutes: z.coerce.number().int().min(0).max(180).optional(),
-        transportFeeOverride: z.coerce.number().min(0).optional(),
-        productDescription: z.string().min(2).optional(),
-        productValue: z.coerce.number().min(0).optional(),
-        items: z
-          .array(
-            z.object({
-              productId: z.string().uuid(),
-              quantity: z.number().int().positive(),
-            }),
-          )
-          .optional(),
-      })
-      .refine(
-        (value) =>
-          Boolean(value.items?.length) ||
-          (Boolean(value.productDescription) &&
-            value.productValue !== undefined),
-        {
-          message: "ORDER_PRODUCTS_REQUIRED",
-        },
-      )
-      .parse(req.body);
+    const body = businessOrderSchema.parse(req.body);
 
     const mapsLocation = await resolveGoogleMapsLink(body.googleMapsUrl);
     const textLocation =
@@ -2717,41 +2644,16 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
       transportFeeOverride: body.transportFeeOverride,
     });
 
-    const productIds = body.items?.map((item) => item.productId) ?? [];
-    const productResult = productIds.length
-      ? await client.query(
-          `SELECT id, name, price
-           FROM products
-           WHERE business_id = $1
-             AND is_available = true
-             AND id = ANY($2::uuid[])`,
-          [params.id, productIds],
-        )
-      : { rows: [] };
-
-    if (productIds.length && productResult.rows.length !== productIds.length) {
-      await client.query("ROLLBACK");
-      res.status(422).json({ error: "PRODUCT_NOT_AVAILABLE" });
-      return;
-    }
-
-    const productsById = new Map(
-      productResult.rows.map((product) => [product.id, product]),
+    const productValue = Number(
+      body.items.reduce((total, item) => total + item.price, 0).toFixed(2),
     );
-    const productValue = body.items?.length
-      ? body.items.reduce((sum, item) => {
-          const product = productsById.get(item.productId);
-          return sum + Number(product.price) * item.quantity;
-        }, 0)
-      : Number(body.productValue ?? 0);
-    const productDescription = body.items?.length
-      ? body.items
-          .map((item) => {
-            const product = productsById.get(item.productId);
-            return `${item.quantity}x ${product.name}`;
-          })
-          .join(", ")
-      : (body.productDescription?.trim() ?? "Porosi biznesi");
+    const productDescription = [
+      body.items.map((item) => `${item.name}: ${item.price} ALL`).join(", "),
+      body.productDescription,
+    ]
+      .filter(Boolean)
+      .join(" - ");
+    assertOrderingOpen();
     const transportFee = quote.finalTransportFee;
     const platformCommission = Number((transportFee * 0.2).toFixed(2));
     const riderEarning = Number((transportFee - platformCommission).toFixed(2));
@@ -2836,23 +2738,6 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
       ],
     );
 
-    for (const item of body.items ?? []) {
-      const product = productsById.get(item.productId);
-      const unitPrice = Number(product.price);
-      await client.query(
-        `INSERT INTO order_items (order_id, product_id, name_snapshot, unit_price, quantity, line_total)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          orderResult.rows[0].id,
-          item.productId,
-          product.name,
-          unitPrice,
-          item.quantity,
-          unitPrice * item.quantity,
-        ],
-      );
-    }
-
     await client.query(
       "INSERT INTO order_status_history (order_id, to_status, note) VALUES ($1, 'CREATED', 'Created by business dashboard')",
       [orderResult.rows[0].id],
@@ -2880,6 +2765,7 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
       ],
     );
 
+    assertOrderingOpen();
     await client.query("COMMIT");
 
     const order = await getBusinessDashboardOrderById(
@@ -2917,278 +2803,6 @@ app.post("/businesses/:id/orders", async (req, res, next) => {
     next(error);
   } finally {
     client.release();
-  }
-});
-
-app.post("/businesses/:id/products", async (req, res, next) => {
-  const client = await pool.connect();
-
-  try {
-    const params = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z
-      .object({
-        name: z.string().min(2),
-        description: z.string().optional().or(z.literal("")),
-        price: z.coerce.number().min(0),
-        section: z.string().min(2).optional().or(z.literal("")),
-        imageUrl: z.string().optional().or(z.literal("")),
-      })
-      .parse(req.body);
-
-    await client.query("BEGIN");
-
-    const business = await client.query(
-      "SELECT id FROM businesses WHERE id = $1",
-      [params.id],
-    );
-    if (!business.rows[0]) {
-      await client.query("ROLLBACK");
-      res.status(404).json({ error: "BUSINESS_NOT_FOUND" });
-      return;
-    }
-
-    const sectionName = body.section?.trim() || "Te preferuarat";
-    const category = await client.query(
-      `INSERT INTO product_categories (business_id, name, sort_order, active)
-       VALUES ($1, $2, 1, true)
-       ON CONFLICT (business_id, name) DO UPDATE SET active = true
-       RETURNING id`,
-      [params.id, sectionName],
-    );
-
-    const product = await client.query(
-      `INSERT INTO products (business_id, category_id, name, description, price, image_url, is_available)
-       VALUES ($1, $2, $3, NULLIF($4, ''), $5, NULLIF($6, ''), true)
-       RETURNING id, name, description, price, image_url, is_available, created_at`,
-      [
-        params.id,
-        category.rows[0].id,
-        body.name.trim(),
-        body.description ?? "",
-        body.price,
-        body.imageUrl ?? "",
-      ],
-    );
-
-    await client.query("COMMIT");
-    res.status(201).json({
-      product: mapBusinessProduct({
-        ...product.rows[0],
-        section: sectionName,
-      }),
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    next(error);
-  } finally {
-    client.release();
-  }
-});
-
-app.post("/businesses/:id/categories", async (req, res, next) => {
-  try {
-    const params = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z
-      .object({
-        name: z.string().min(2),
-        sortOrder: z.coerce.number().int().optional(),
-      })
-      .parse(req.body);
-
-    const business = await pool.query(
-      "SELECT id FROM businesses WHERE id = $1",
-      [params.id],
-    );
-    if (!business.rows[0]) {
-      res.status(404).json({ error: "BUSINESS_NOT_FOUND" });
-      return;
-    }
-
-    const { rows } = await pool.query(
-      `INSERT INTO product_categories (business_id, name, sort_order, active)
-       VALUES ($1, $2, $3, true)
-       ON CONFLICT (business_id, name) DO UPDATE
-       SET active = true,
-           sort_order = EXCLUDED.sort_order
-       RETURNING id, name, sort_order, active,
-         (SELECT COUNT(*)::int FROM products p WHERE p.category_id = product_categories.id AND p.is_available = true) AS product_count`,
-      [params.id, body.name.trim(), body.sortOrder ?? 1],
-    );
-
-    res.status(201).json({ category: mapBusinessCategory(rows[0]) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.patch("/businesses/:id/categories/:categoryId", async (req, res, next) => {
-  try {
-    const params = z
-      .object({ id: z.string().uuid(), categoryId: z.string().uuid() })
-      .parse(req.params);
-    const body = z
-      .object({
-        name: z.string().min(2),
-        sortOrder: z.coerce.number().int().optional(),
-      })
-      .parse(req.body);
-
-    const { rows } = await pool.query(
-      `UPDATE product_categories
-       SET name = $3,
-           sort_order = $4,
-           active = true
-       WHERE id = $1
-         AND business_id = $2
-       RETURNING id, name, sort_order, active,
-         (SELECT COUNT(*)::int FROM products p WHERE p.category_id = product_categories.id AND p.is_available = true) AS product_count`,
-      [params.categoryId, params.id, body.name.trim(), body.sortOrder ?? 1],
-    );
-
-    if (!rows[0]) {
-      res.status(404).json({ error: "CATEGORY_NOT_FOUND" });
-      return;
-    }
-
-    res.json({ category: mapBusinessCategory(rows[0]) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.delete("/businesses/:id/categories/:categoryId", async (req, res, next) => {
-  const client = await pool.connect();
-
-  try {
-    const params = z
-      .object({ id: z.string().uuid(), categoryId: z.string().uuid() })
-      .parse(req.params);
-
-    await client.query("BEGIN");
-    const category = await client.query(
-      "SELECT id FROM product_categories WHERE id = $1 AND business_id = $2 FOR UPDATE",
-      [params.categoryId, params.id],
-    );
-
-    if (!category.rows[0]) {
-      await client.query("ROLLBACK");
-      res.status(404).json({ error: "CATEGORY_NOT_FOUND" });
-      return;
-    }
-
-    await client.query(
-      "UPDATE products SET category_id = NULL, updated_at = now() WHERE category_id = $1 AND business_id = $2",
-      [params.categoryId, params.id],
-    );
-    await client.query(
-      "UPDATE product_categories SET active = false WHERE id = $1 AND business_id = $2",
-      [params.categoryId, params.id],
-    );
-
-    await client.query("COMMIT");
-    res.json({ ok: true });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    next(error);
-  } finally {
-    client.release();
-  }
-});
-
-app.patch("/businesses/:id/products/:productId", async (req, res, next) => {
-  const client = await pool.connect();
-
-  try {
-    const params = z
-      .object({ id: z.string().uuid(), productId: z.string().uuid() })
-      .parse(req.params);
-    const body = z
-      .object({
-        name: z.string().min(2),
-        description: z.string().optional().or(z.literal("")),
-        price: z.coerce.number().min(0),
-        section: z.string().min(2).optional().or(z.literal("")),
-        imageUrl: z.string().optional().or(z.literal("")),
-      })
-      .parse(req.body);
-
-    await client.query("BEGIN");
-
-    const current = await client.query(
-      "SELECT id FROM products WHERE id = $1 AND business_id = $2",
-      [params.productId, params.id],
-    );
-    if (!current.rows[0]) {
-      await client.query("ROLLBACK");
-      res.status(404).json({ error: "PRODUCT_NOT_FOUND" });
-      return;
-    }
-
-    const sectionName = body.section?.trim() || "Te preferuarat";
-    const category = await client.query(
-      `INSERT INTO product_categories (business_id, name, sort_order, active)
-       VALUES ($1, $2, 1, true)
-       ON CONFLICT (business_id, name) DO UPDATE SET active = true
-       RETURNING id`,
-      [params.id, sectionName],
-    );
-
-    const product = await client.query(
-      `UPDATE products
-       SET category_id = $3,
-           name = $4,
-           description = NULLIF($5, ''),
-           price = $6,
-           image_url = NULLIF($7, ''),
-           updated_at = now()
-       WHERE id = $1
-         AND business_id = $2
-       RETURNING id, name, description, price, image_url, is_available, created_at`,
-      [
-        params.productId,
-        params.id,
-        category.rows[0].id,
-        body.name.trim(),
-        body.description ?? "",
-        body.price,
-        body.imageUrl ?? "",
-      ],
-    );
-
-    await client.query("COMMIT");
-    res.json({
-      product: mapBusinessProduct({ ...product.rows[0], section: sectionName }),
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    next(error);
-  } finally {
-    client.release();
-  }
-});
-
-app.delete("/businesses/:id/products/:productId", async (req, res, next) => {
-  try {
-    const params = z
-      .object({ id: z.string().uuid(), productId: z.string().uuid() })
-      .parse(req.params);
-    const { rowCount } = await pool.query(
-      `UPDATE products
-       SET is_available = false,
-           updated_at = now()
-       WHERE id = $1
-         AND business_id = $2`,
-      [params.productId, params.id],
-    );
-
-    if (!rowCount) {
-      res.status(404).json({ error: "PRODUCT_NOT_FOUND" });
-      return;
-    }
-
-    res.json({ ok: true });
-  } catch (error) {
-    next(error);
   }
 });
 
@@ -3425,7 +3039,7 @@ app.post("/public/cart/clear", async (req, res, next) => {
   }
 });
 
-app.post("/public/orders", async (req, res, next) => {
+app.post("/public/orders", orderingHours, async (req, res, next) => {
   const client = await pool.connect();
 
   try {
@@ -3470,18 +3084,27 @@ app.post("/public/orders", async (req, res, next) => {
     const customerName = body.customerName ?? account?.name ?? null;
     const customerPhone = body.customerPhone ?? account?.phone;
     const addressText = body.addressText ?? account?.default_address;
-    const lat = body.lat ?? Number(account?.default_lat ?? 41.3198);
-    const lng = body.lng ?? Number(account?.default_lng ?? 19.8172);
+    const lat =
+      body.lat ??
+      (account?.default_lat == null ? NaN : Number(account.default_lat));
+    const lng =
+      body.lng ??
+      (account?.default_lng == null ? NaN : Number(account.default_lng));
 
-    if (!customerPhone || !addressText)
+    if (
+      !customerName?.trim() ||
+      !customerPhone ||
+      !addressText ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng)
+    )
       throw new Error("CUSTOMER_DETAILS_REQUIRED");
 
-    const zoneResult = await client.query(
-      "SELECT * FROM resolve_zone_for_point($1, $2)",
-      [lat, lng],
-    );
-    const zone = zoneResult.rows[0];
-    if (!zone) throw new Error("ZONE_NOT_FOUND");
+    const quote = await calculateBusinessTransportQuote(client, {
+      businessId: body.businessId,
+      lat,
+      lng,
+    });
 
     const productIds = body.items.map((item) => item.productId);
     const productResult = await client.query(
@@ -3503,7 +3126,9 @@ app.post("/public/orders", async (req, res, next) => {
       const product = productsById.get(item.productId);
       return sum + Number(product.price) * item.quantity;
     }, 0);
-    const transportFee = Number(zone.transport_fee);
+    if (!Number.isFinite(productValue) || productValue <= 0)
+      throw new Error("PRODUCT_VALUE_REQUIRED");
+    const transportFee = quote.finalTransportFee;
     const platformCommission = Number((transportFee * 0.2).toFixed(2));
     const riderEarning = Number((transportFee - platformCommission).toFixed(2));
     const totalAmount = productValue + transportFee;
@@ -3521,7 +3146,7 @@ app.post("/public/orders", async (req, res, next) => {
       `INSERT INTO addresses (customer_id, zone_id, address_text, lat, lng)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
-      [customerResult.rows[0].id, zone.zone_id, addressText, lat, lng],
+      [customerResult.rows[0].id, quote.zoneId, addressText, lat, lng],
     );
 
     const orderResult = await client.query(
@@ -3548,7 +3173,7 @@ app.post("/public/orders", async (req, res, next) => {
         body.businessId,
         customerResult.rows[0].id,
         addressResult.rows[0].id,
-        zone.zone_id,
+        quote.zoneId,
         "Customer online order",
         productValue,
         transportFee,
@@ -3557,6 +3182,22 @@ app.post("/public/orders", async (req, res, next) => {
         riderEarning,
       ],
     );
+
+    const pricedOrder = await client.query(
+      `UPDATE orders SET route_distance_meters = $2, route_distance_source = $3,
+       route_preference = $4, calculated_transport_fee = $5, ring_surcharge_applied = $6,
+       ring_surcharge_fee = $7 WHERE id = $1 RETURNING *`,
+      [
+        orderResult.rows[0].id,
+        quote.distanceMeters,
+        quote.distanceSource,
+        quote.routePreference,
+        quote.calculatedTransportFee,
+        quote.ringSurchargeApplied,
+        quote.ringSurchargeFee,
+      ],
+    );
+    orderResult.rows[0] = pricedOrder.rows[0];
 
     for (const item of body.items) {
       const product = productsById.get(item.productId);
@@ -3600,6 +3241,7 @@ app.post("/public/orders", async (req, res, next) => {
       );
     }
 
+    assertOrderingOpen();
     await client.query("COMMIT");
 
     io.to("admin").emit("order.created", orderResult.rows[0]);
@@ -3727,20 +3369,40 @@ app.post("/zones/resolve", async (req, res, next) => {
 
 app.post("/riders/:id/itinerary", async (req, res, next) => {
   try {
-    const {id} = z.object({id:z.string().uuid()}).parse(req.params);
-    if(req.header("x-rider-id") !== id) {
-      res.status(403).json({error:"RIDER_NOT_AUTHORIZED"}); return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (req.header("x-rider-id") !== id) {
+      res.status(403).json({ error: "RIDER_NOT_AUTHORIZED" });
+      return;
     }
-    const origin = z.object({lat:z.number().min(-90).max(90),lng:z.number().min(-180).max(180)}).parse(req.body);
+    const origin = z
+      .object({
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180),
+      })
+      .parse(req.body);
     const dashboard = await buildRiderDashboard(id);
-    const orders = dashboard.activeOrders.map(order => ({
-      id:String(order.id),code:String(order.code),status:String(order.status),businessName:String(order.businessName),
-      pickupAddress:String(order.pickupAddress),pickupLat:order.pickupLat,pickupLng:order.pickupLng,
-      dropoffAddress:String(order.dropoffAddress),dropoffLat:order.dropoffLat,dropoffLng:order.dropoffLng,
+    const orders = dashboard.activeOrders.map((order) => ({
+      id: String(order.id),
+      code: String(order.code),
+      status: String(order.status),
+      businessName: String(order.businessName),
+      pickupAddress: String(order.pickupAddress),
+      pickupLat: order.pickupLat,
+      pickupLng: order.pickupLng,
+      dropoffAddress: String(order.dropoffAddress),
+      dropoffLat: order.dropoffLat,
+      dropoffLng: order.dropoffLng,
     }));
     const route = await buildItinerary(googleMapsApiKey, origin, orders);
-    res.json({...route,coordinates:route.encodedPolyline ? decodeGooglePolyline(route.encodedPolyline) : []});
-  } catch(error) { next(error); }
+    res.json({
+      ...route,
+      coordinates: route.encodedPolyline
+        ? decodeGooglePolyline(route.encodedPolyline)
+        : [],
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/orders/:id/accept", async (req, res, next) => {
@@ -3787,9 +3449,16 @@ app.post("/orders/:id/accept", async (req, res, next) => {
     }
 
     await client.query("BEGIN");
-    await client.query("SELECT id FROM rider_profiles WHERE id = $1 FOR UPDATE", [body.riderId]);
-    const capacity = await client.query("SELECT COUNT(*)::int AS count FROM orders WHERE assigned_rider_id = $1 AND status IN ('ACCEPTED', 'PICKED_UP')", [body.riderId]);
-    if (capacity.rows[0].count >= 4) throw new Error("RIDER_ORDER_CAPACITY_REACHED");
+    await client.query(
+      "SELECT id FROM rider_profiles WHERE id = $1 FOR UPDATE",
+      [body.riderId],
+    );
+    const capacity = await client.query(
+      "SELECT COUNT(*)::int AS count FROM orders WHERE assigned_rider_id = $1 AND status IN ('ACCEPTED', 'PICKED_UP')",
+      [body.riderId],
+    );
+    if (capacity.rows[0].count >= 4)
+      throw new Error("RIDER_ORDER_CAPACITY_REACHED");
     const { rows } = await client.query(
       "SELECT * FROM accept_order_atomic($1, $2)",
       [params.id, body.riderId],
@@ -4064,15 +3733,18 @@ app.use(
     }
 
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
-    const status = message.includes("NOT_FOUND")
-      ? 404
-      : message === "GOOGLE_DIRECTIONS_API_KEY_REQUIRED"
-        ? 503
-        : message.startsWith("GOOGLE_DIRECTIONS_")
-          ? 502
-      : message.includes("NOT_AVAILABLE")
+    const status =
+      message === "ORDERING_CLOSED"
         ? 409
-        : 400;
+        : message.includes("NOT_FOUND")
+          ? 404
+          : message === "GOOGLE_DIRECTIONS_API_KEY_REQUIRED"
+            ? 503
+            : message.startsWith("GOOGLE_DIRECTIONS_")
+              ? 502
+              : message.includes("NOT_AVAILABLE")
+                ? 409
+                : 400;
     res.status(status).json({ error: message });
   },
 );
