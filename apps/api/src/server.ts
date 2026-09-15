@@ -1631,7 +1631,8 @@ app.patch("/admin/riders/:id", async (req, res, next) => {
     await client.query("BEGIN");
     const updated = await client.query(
       `UPDATE rider_profiles rp SET vehicle_type=$2, license_number=NULLIF($3,''),
-       status=$4, is_online=CASE WHEN $4 <> 'ACTIVE' THEN false ELSE rp.is_online END
+       status=$4::rider_status,
+       is_online=CASE WHEN $4::rider_status <> 'ACTIVE'::rider_status THEN false ELSE rp.is_online END
        WHERE rp.id=$1 RETURNING rp.user_id`,
       [id, body.vehicleType, body.licenseNumber ?? "", body.status],
     );
