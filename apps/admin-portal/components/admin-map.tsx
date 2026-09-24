@@ -45,7 +45,9 @@ export function ZoneBuilderMap({
   points,
   zones,
   onPointsChange,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   points: MapPoint[];
   zones: AdminZone[];
   onPointsChange: (points: MapPoint[]) => void;
@@ -72,6 +74,7 @@ export function ZoneBuilderMap({
         mapRef.current = createBaseMap(mapElementRef.current);
         setMapReady(true);
         mapRef.current.addListener("click", (event: any) => {
+          if (readOnly) return;
           const latLng = event.latLng;
           if (!latLng) return;
           onPointsChangeRef.current([
@@ -139,11 +142,11 @@ export function ZoneBuilderMap({
       if (zone.points.length < 3) return;
       boundsPoints.push(...zone.points);
       const polygon = new window.google.maps.Polygon({
-        fillColor: zone.isSurchargeArea ? "#f59e0b" : "#FF5500",
-        fillOpacity: zone.isSurchargeArea ? 0.16 : 0.1,
+        fillColor: zone.isSurchargeArea ? "#22c55e" : "#FF5500",
+        fillOpacity: zone.isSurchargeArea ? 0.25 : 0.03,
         map: mapRef.current,
         paths: zone.points,
-        strokeColor: "#ffffff",
+        strokeColor: zone.isSurchargeArea ? "#15803d" : "#ffffff",
         strokeOpacity: 0.9,
         strokeWeight: 2,
       });
@@ -151,7 +154,7 @@ export function ZoneBuilderMap({
         polygon.setOptions({ fillOpacity: 0.24 }),
       );
       polygon.addListener("mouseout", () =>
-        polygon.setOptions({ fillOpacity: zone.isSurchargeArea ? 0.16 : 0.1 }),
+        polygon.setOptions({ fillOpacity: zone.isSurchargeArea ? 0.25 : 0.03 }),
       );
       zoneOverlaysRef.current.push(polygon);
     });
@@ -167,16 +170,16 @@ export function ZoneBuilderMap({
         <OpenStreetAdminMap
           points={points}
           zones={zones}
-          onPointsChange={onPointsChange}
+          onPointsChange={readOnly ? undefined : onPointsChange}
         />
       ) : null}
       <div className="absolute left-4 top-4 z-[500] rounded-2xl bg-[#101010]/90 px-4 py-3 text-white shadow-happy backdrop-blur">
         <p className="type-badge flex items-center uppercase tracking-wide text-white/55">
           <MousePointer2 className="mr-2 h-4 w-4 text-happy-orange" />
-          Kliko ne harte
+          {readOnly ? "Zona pa shtesën 100 ALL" : "Kliko ne harte"}
         </p>
         <p className="type-secondary mt-1 text-white/70">
-          {points.length} pika te zgjedhura
+          {readOnly ? "Brenda kufirit: tarifa sipas distancës. Jashtë: +100 ALL." : `${points.length} pika te zgjedhura`}
         </p>
       </div>
     </div>

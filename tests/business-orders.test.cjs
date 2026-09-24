@@ -11,44 +11,22 @@ const {
 const { getGoogleRoadRoute } = require("../apps/api/src/google-routes.ts");
 
 const minimal = {
-  customerName: "Klient",
-  customerPhone: "0691234567",
-  items: [{ name: "Pako", price: 1 }],
-  lat: 41.33,
-  lng: 19.82,
+  customerPhone: "+355691234567", orderValue: 100,
+  googleMapsUrl: "https://www.google.com/maps?q=41.33,19.82", readyMinutes: 10
 };
-test("manual order: required goods and customer fields; optional product details and preparation", () => {
-  assert.equal(businessOrderSchema.parse(minimal).readyMinutes, 10);
-  assert.equal(
-    businessOrderSchema.parse({ ...minimal, readyMinutes: "" }).readyMinutes,
-    10,
-  );
-  for (const items of [
-    undefined,
-    [],
-    [{ name: "", price: 1 }],
-    [{ name: "Pako", price: 0 }],
-    [{ name: "Pako", price: -1 }],
-    [{ name: "Pako", price: NaN }],
-  ]) {
-    assert.equal(
-      businessOrderSchema.safeParse({ ...minimal, items }).success,
-      false,
-    );
+test("minimal order contract: required value, maps, phone, minutes; optional name/note", () => {
+  assert.equal(businessOrderSchema.parse(minimal).customerName, undefined);
+  for (const field of ["orderValue", "googleMapsUrl", "customerPhone", "readyMinutes"]) {
+    for (const value of [undefined, null, ""]) assert.equal(businessOrderSchema.safeParse({...minimal,[field]:value}).success,false,field);
   }
-  for (const field of ["customerName", "customerPhone"]) {
-    assert.equal(
-      businessOrderSchema.safeParse({ ...minimal, [field]: " " }).success,
-      false,
-    );
-  }
-  assert.equal(
-    businessOrderSchema.parse({ ...minimal, transportFeeOverride: 0 })
-      .transportFeeOverride,
-    0,
-  );
+  for (const value of [NaN,Infinity,"100"]) assert.equal(businessOrderSchema.safeParse({...minimal,orderValue:value}).success,false);
+  for (const value of [0,-1]) assert.equal(businessOrderSchema.safeParse({...minimal,orderValue:value}).success,true);
+  assert.equal(businessOrderSchema.safeParse({...minimal,googleMapsUrl:"https://evil.example/maps?q=41,19"}).success,false);
+  assert.equal(businessOrderSchema.parse({...minimal,transportFeeOverride:0}).transportFeeOverride,undefined);
 });
-
+test("Sunday is open", () => {
+  assert.equal(getOrderWindow(new Date("2026-09-20T12:00:00+02:00")).isOpen,true);
+});
 test("Tirana opening boundaries in summer and winter", () => {
   for (const [day, offset] of [
     ["2026-07-15", "+02:00"],
@@ -69,7 +47,7 @@ test("Tirana opening boundaries in summer and winter", () => {
   }
 });
 
-test("meter pricing, one surcharge and manual override", () => {
+test("automatic meter pricing and one surcharge", () => {
   for (const [meters, fee] of [
     [0, 300],
     [2999, 300],
@@ -77,6 +55,7 @@ test("meter pricing, one surcharge and manual override", () => {
     [3001, 300.1],
     [3010, 301],
     [4000, 400],
+    [5000, 500],
   ]) {
     assert.equal(calculateTransportPrice(meters, false).finalTransportFee, fee);
     assert.equal(
@@ -84,10 +63,10 @@ test("meter pricing, one surcharge and manual override", () => {
       fee + 100,
     );
   }
-  const quote = calculateTransportPrice(4000, true, 250);
+  const quote = calculateTransportPrice(4000, true);
   assert.equal(quote.calculatedTransportFee, 500);
-  assert.equal(quote.finalTransportFee, 250);
-  assert.equal(quote.transportFeeOverridden, true);
+  assert.equal(quote.finalTransportFee, 500);
+  assert.equal(quote.transportFeeOverridden, false);
   assert.throws(() => calculateTransportPrice(-1, false));
 });
 
@@ -97,12 +76,12 @@ const routeInput = {
   destinationLat: 41.33,
   destinationLng: 19.82,
 };
-test("billing requires Google; display estimates remain available", async () => {
+test("billing requires Google; explicitly requested estimates are separate", async () => {
   await assert.rejects(
     getGoogleRoadRoute("", routeInput, { allowEstimate: false }),
     /API_KEY_REQUIRED/,
   );
-  assert.match((await getGoogleRoadRoute("", routeInput)).source, /FALLBACK/);
+  assert.match((await getGoogleRoadRoute("", routeInput, {allowEstimate:true})).source, /FALLBACK/);
 });
 
 test("Google uses shortest alternative and ignores traffic; errors never become billable estimates", async (t) => {
@@ -201,7 +180,7 @@ test("coverage gates both endpoints before Google, even with override; tariff ch
         input,
       );
       assert.equal(quote.ringSurchargeFee, scenario === "inside" ? 0 : 100);
-      assert.equal(quote.finalTransportFee, 250);
+      assert.equal(quote.finalTransportFee, scenario === "inside" ? 300.1 : 400.1);
     }
   }
 });

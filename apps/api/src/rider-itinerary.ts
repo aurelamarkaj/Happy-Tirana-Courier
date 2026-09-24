@@ -1,7 +1,4 @@
-import {
-  getEstimatedRoadRoute,
-  getGoogleRoadRoute,
-} from "./google-routes.js";
+import { getGoogleRoadRoute } from "./google-routes.js";
 
 const googleMapsHttpReferrer =
   process.env.GOOGLE_MAPS_HTTP_REFERRER?.trim() ?? "";
@@ -59,7 +56,7 @@ export function orderStops(orders: ItineraryOrder[]): Stop[] {
 // Exact shortest open path on directed road distances, subject to pickup precedence.
 // Matrix index 0 is the rider; index i + 1 corresponds to stops[i].
 export function optimizeStops(stops: Stop[], distances: number[][]): Stop[] {
-  if (stops.length > 8) throw new Error("RIDER_ORDER_CAPACITY_REACHED");
+  if (stops.length > 4) throw new Error("RIDER_ORDER_CAPACITY_REACHED");
   const full = (1 << stops.length) - 1;
   const memo = new Map<string, { cost: number; path: number[] }>();
   function visit(mask: number, last: number): { cost: number; path: number[] } {
@@ -103,68 +100,23 @@ export async function buildItinerary(
       durationSeconds: 0,
       encodedPolyline: "",
     };
-  if (stops.length > 8) throw new Error("RIDER_ORDER_CAPACITY_REACHED");
+  if (stops.length > 4) throw new Error("RIDER_ORDER_CAPACITY_REACHED");
   let ordered = stops;
   if (orders.length > 1) {
     const points = [origin, ...stops];
-    const waypoint = (p: Point) => ({
-      waypoint: { location: { latLng: { latitude: p.lat, longitude: p.lng } } },
-    });
-    try {
-      const response = await fetch(
-        "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix",
-        {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(googleMapsHttpReferrer
-            ? { Referer: googleMapsHttpReferrer }
-            : {}),
-          "X-Goog-Api-Key": key,
-          "X-Goog-FieldMask":
-            "originIndex,destinationIndex,distanceMeters,status,condition",
-        },
-        body: JSON.stringify({
-          origins: points.map(waypoint),
-          destinations: points.map(waypoint),
-          travelMode: "DRIVE",
-          routingPreference: "TRAFFIC_UNAWARE",
-        }),
-        signal: AbortSignal.timeout(10000),
-        },
-      );
-      if (!response.ok) throw new Error("GOOGLE_DIRECTIONS_REQUEST_FAILED");
-      const elements = (await response.json()) as Array<{
-        originIndex?: number;
-        destinationIndex?: number;
-        distanceMeters?: number;
-        condition?: string;
-        status?: { code?: number };
-      }>;
-      const distances = points.map(() => points.map(() => Infinity));
-      for (const e of elements) {
-        const i = e.originIndex ?? 0,
-          j = e.destinationIndex ?? 0;
-        if (i < 0 || j < 0 || i >= points.length || j >= points.length) continue;
-        if (!e.status?.code && e.condition === "ROUTE_EXISTS")
-          distances[i][j] = e.distanceMeters ?? 0;
+    const distances: number[][] = [];
+    // Same shortest-road selection as billing, for every directed leg.
+    // No air-distance fallback: unavailable road data must be visible.
+    for (let i = 0; i < points.length; i++) {
+      distances[i] = [];
+      for (let j = 0; j < points.length; j++) {
+        distances[i][j] = i === j ? 0 : (await getGoogleRoadRoute(key, {
+          originLat: points[i].lat, originLng: points[i].lng,
+          destinationLat: points[j].lat, destinationLng: points[j].lng,
+        }, {allowEstimate:false})).distanceMeters;
       }
-      ordered = optimizeStops(stops, distances);
-    } catch {
-      const distances = points.map((from) =>
-        points.map((to) =>
-          from === to
-            ? 0
-            : getEstimatedRoadRoute({
-                originLat: from.lat,
-                originLng: from.lng,
-                destinationLat: to.lat,
-                destinationLng: to.lng,
-              }).distanceMeters,
-        ),
-      );
-      ordered = optimizeStops(stops, distances);
     }
+    ordered = optimizeStops(stops, distances);
   }
   const destination = ordered[ordered.length - 1];
   const route = await getGoogleRoadRoute(key, {
@@ -173,6 +125,6 @@ export async function buildItinerary(
     destinationLat: destination.lat,
     destinationLng: destination.lng,
     intermediates: ordered.slice(0, -1),
-  });
+  }, {allowEstimate:false});
   return { ...route, stops: ordered };
 }

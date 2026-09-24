@@ -1,4 +1,5 @@
 "use client";
+import { OperationalReadOnly } from "../../shared/operational-readonly";
 
 import {
   Bike,
@@ -9,11 +10,13 @@ import {
   Map,
   Menu,
   ReceiptText,
+  PackageSearch,
   Route,
   ShieldCheck,
   X,
 } from "lucide-react";
 import Link from "next/link";
+import { OperationalNotices } from "./operational-notices";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -26,6 +29,7 @@ const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/live-map", label: "Harta live", icon: Route },
   { href: "/businesses", label: "Biznese", icon: Building2 },
+  { href: "/orders", label: "Porosite", icon: PackageSearch },
   { href: "/riders", label: "Motoriste", icon: Bike },
   { href: "/zones", label: "Zona", icon: Map },
   { href: "/finance", label: "Financa", icon: ReceiptText },
@@ -234,7 +238,8 @@ export function AdminShell({
             </div>
             {action && <div className="page-actions">{action}</div>}
           </header>
-          {children}
+          <OperationalNotices />
+          <OperationalReadOnly><div className="admin-page-sections">{children}</div></OperationalReadOnly>
           <footer className="workspace-footer">
             <span>Happy Tirana Courier</span>
             <span>Paneli i administrimit</span>

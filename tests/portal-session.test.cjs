@@ -12,7 +12,7 @@ const portals = [
 ];
 
 function storage(t, key, id = accountId) {
-  const values = new Map([[key, JSON.stringify({ id })]]);
+  const values = new Map([[key, JSON.stringify({ id, token: "test-session-token" })]]);
   const original = globalThis.window;
   globalThis.window = { localStorage: {
     getItem: (name) => values.get(name) ?? null,

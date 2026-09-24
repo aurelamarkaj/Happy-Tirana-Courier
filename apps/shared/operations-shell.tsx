@@ -1,4 +1,5 @@
 "use client";
+import { OperationalReadOnly } from "./operational-readonly";
 
 import {
   ChevronRight,
@@ -205,7 +206,7 @@ export function OperationsShell({
               {action}
             </div>
           </header>
-          {children}
+          <OperationalReadOnly>{children}</OperationalReadOnly>
           <footer className="ops-footer">
             <span>Happy Tirana Courier</span>
             <span>{role}</span>

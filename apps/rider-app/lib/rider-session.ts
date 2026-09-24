@@ -3,6 +3,7 @@
 const riderStorageKey = "happy-tirana-rider-session-v1";
 
 export interface RiderSession {
+  token: string;
   id: string;
   userId: string;
   name: string;
@@ -19,7 +20,7 @@ export function getRiderSession() {
 
   try {
     const session = JSON.parse(raw) as RiderSession;
-    return session.id ? session : null;
+    return session.id && session.token ? session : null;
   } catch {
     return null;
   }

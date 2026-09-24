@@ -76,6 +76,14 @@ export default function EarningsPage() {
       <section className="ops-metrics" aria-label="Bilanci">
         <OperationsMetric
           icon={WalletCards}
+          label="Gjendja për tërheqje"
+          value={dashboard ? formatLek(dashboard.rider.accountBalanceAll ?? 0) : "--"}
+          detail="Fitimet e pashlyera nga admini"
+          tone="green"
+          loading={loading}
+        />
+        <OperationsMetric
+          icon={WalletCards}
           label="Fitime sot"
           value={dashboard ? formatLek(dashboard.metrics.todayEarnings) : "--"}
           detail="Dergesat e sotme"

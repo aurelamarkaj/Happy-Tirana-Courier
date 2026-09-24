@@ -843,3 +843,102 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Light workspace for both business and rider portals. */
+.ops-frame { --ops-canvas:#ffffff; --ops-surface:#ffffff; --ops-line:#e2e5e9; --ops-muted:#627080; --ops-orange:#c84e1a; --ops-green:#167d59; color:#18212b; }
+.ops-sidebar, .ops-metric, .ops-section, .ops-topbar { background:#fff; }
+.ops-nav-link { color:#43505d; }
+.ops-nav-link:hover, .ops-secondary-button:hover { background:#f2f4f6; color:#18212b; }
+.ops-nav-link.is-active { background:#fff0e9; color:#ad4215; }
+.ops-frame :is(.business-soft,.rider-soft) { background:#f8f9fa; }
+.ops-frame :is(.business-input,.rider-input), .ops-frame input:not([type="checkbox"]), .ops-frame textarea, .ops-frame select { background:#fff; border-color:#cfd5dc; color:#18212b; }
+.ops-frame select option { background:#fff; color:#18212b; }
+.ops-frame .text-white, .ops-frame .text-white\/70, .ops-frame .text-white\/72, .ops-frame .text-white\/80, .ops-frame .text-white\/90 { color:#18212b; }
+.ops-frame :is(.bg-white\/5,.bg-white\/6,.bg-white\/8,.bg-white\/10) { background:#f2f4f6; }
+.ops-frame :is(.border-white\/10,.border-white\/15,.border-white\/20) { border-color:#e2e5e9; }
+.ops-frame .bg-happy-orange, .ops-frame .ops-primary-button { color:#fff; }
+.ops-frame .ops-secondary-button, .ops-frame .ops-segmented { background:#fff; color:#18212b; }
+.ops-frame .ops-segmented button[aria-pressed="true"] { background:#e9edf1; color:#18212b; }
+.ops-frame th { background:#f5f7f8; color:#42505f; }
+.ops-frame tr:hover td { background:#f8f9fa; }
+.ops-frame .ops-notice { background:#fff5ed; color:#863c19; border-color:#f1ceba; }
+.ops-frame [class*="text-white/"] { color:#536170; }
+.ops-frame .text-white { color:#18212b; }
+.ops-frame .bg-happy-orange, .ops-frame .ops-primary { color:#fff; }
+.ops-frame .text-emerald-200 { color:#166534; }
+.ops-frame .text-red-100 { color:#991b1b; }
+.ops-frame .ops-secondary { background:#fff; border-color:#cfd5dc; color:#18212b; }
+.ops-frame .ops-secondary:hover { background:#f2f4f6; }
+.ops-frame .ops-search { border-color:#cfd5dc; color:#18212b; }
+.ops-frame .ops-segments button { color:#536170; }
+.ops-frame .ops-segments button[aria-pressed="true"] { background:#e9edf1; color:#18212b; }
+.ops-frame .ops-metric p, .ops-frame th, .ops-frame .ops-availability-label { color:#536170; }
+.ops-frame .ops-mobile-nav { background:#fff; }
+.ops-frame .ops-warning { color:#9a451c; }
+.ops-frame .ops-icon { color:#43505d; }
+.ops-frame .ops-icon:hover { background:#f2f4f6; color:#18212b; }
+.ops-frame .ops-location, .ops-frame .ops-delivery-banner p { color:#536170; }
+.ops-frame .ops-notice.is-danger { background:#fff1f2; border-color:#fecdd3; color:#9f1239; }
+.ops-frame .ops-debit-meter { background:#e9edf1; }
+.ops-frame .ops-avatar { background:#e9edf1; color:#18212b; }
+.ops-frame .ops-tone-green { --tone:#167d59; }
+.ops-frame .ops-tone-blue { --tone:#2769aa; }
+
+/* Keep the new-order form in one clear card and make each icon field one surface. */
+.ops-frame .ops-order-form {
+  border: 0;
+  padding-top: 0;
+  background: transparent;
+}
+.ops-frame .ops-order-form > .business-panel {
+  padding: clamp(20px, 3vw, 32px);
+  border: 1px solid #dfe5eb;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(24, 33, 43, 0.07);
+}
+.ops-frame .ops-order-form > .business-panel > div:first-child {
+  margin-bottom: 0;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #edf0f3;
+}
+.ops-frame .ops-order-form label.type-input {
+  color: #344253;
+  font-weight: 600;
+}
+.ops-frame .ops-order-form .business-soft,
+.ops-frame .ops-order-form .business-input {
+  background: #f3f5f7;
+  border-color: #d9e0e7;
+}
+.ops-frame .ops-order-form .business-soft:focus-within,
+.ops-frame .ops-order-form .business-input:focus {
+  border-color: #df6634;
+  box-shadow: 0 0 0 3px rgba(223, 102, 52, 0.12);
+}
+.ops-frame .ops-order-form .business-soft > input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.ops-frame .ops-order-form .business-soft > input:focus {
+  border: 0;
+  box-shadow: none;
+}
+.ops-frame .ops-order-form .business-input {
+  width: 100%;
+  border-radius: 10px;
+}
+.ops-frame .ops-order-form .ops-quote {
+  padding: 22px;
+  border: 1px solid #e0e5eb;
+  border-radius: 14px;
+  background: #f8fafb;
+}
+@media (max-width: 640px) {
+  .ops-frame .ops-order-form .ops-quote { padding: 16px; }
+}

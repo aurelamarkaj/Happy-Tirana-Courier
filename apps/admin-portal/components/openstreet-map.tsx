@@ -104,9 +104,9 @@ export function OpenStreetAdminMap({
         );
         bounds.push(...polygonPoints);
         L.polygon(polygonPoints, {
-          color: "#ffffff",
-          fillColor: zone.isSurchargeArea ? "#f59e0b" : "#ff5500",
-          fillOpacity: zone.isSurchargeArea ? 0.18 : 0.12,
+          color: zone.isSurchargeArea ? "#15803d" : "#ffffff",
+          fillColor: zone.isSurchargeArea ? "#22c55e" : "#ff5500",
+          fillOpacity: zone.isSurchargeArea ? 0.25 : 0.12,
           opacity: 0.85,
           weight: 2,
         }).addTo(layers);

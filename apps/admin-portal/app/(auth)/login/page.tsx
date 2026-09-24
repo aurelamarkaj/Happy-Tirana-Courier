@@ -40,7 +40,7 @@ export default function LoginPage() {
   return (
     <main className="admin-page min-h-screen text-white">
       <section className="grid min-h-screen lg:grid-cols-2">
-        <div className="relative hidden min-h-screen overflow-hidden bg-[#101010] lg:block">
+        <div className="admin-login-hero relative hidden min-h-screen overflow-hidden bg-[#101010] lg:block">
           <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,85,0,0.28),rgba(16,16,16,0.8)),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(0deg,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:auto,52px_52px,52px_52px]" />
           <div className="relative flex h-full flex-col justify-between p-8">
             <img
@@ -64,7 +64,7 @@ export default function LoginPage() {
         </div>
 
         <form
-          className="admin-panel mx-auto my-8 w-[calc(100%-32px)] max-w-[520px] self-center rounded-2xl border p-5 shadow-happy md:p-8"
+          className="admin-panel admin-login-form mx-auto my-8 w-[calc(100%-32px)] max-w-[520px] self-center rounded-2xl border p-5 shadow-happy md:p-8"
           onSubmit={submit}
         >
           <div className="grid h-12 w-12 place-items-center rounded-xl bg-happy-orange/15 text-happy-orange">

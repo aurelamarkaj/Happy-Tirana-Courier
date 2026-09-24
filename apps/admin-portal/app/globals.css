@@ -1327,3 +1327,53 @@ a {
     scroll-behavior: auto !important;
   }
 }
+
+.admin-page-sections { display: grid; gap: 24px; min-width: 0; }
+.admin-form-grid > button[type="submit"] { align-self: end; width: 100%; }
+
+/* Light administration workspace. */
+:root { --canvas:#fff; --surface:#fff; --line:#e2e5e9; --muted:#627080; --ink:#18212b; --accent:#bd4919; --green:#167d59; }
+body, .admin-page { background:#fff; color:var(--ink); }
+.admin-sidebar, .metric-item, .admin-panel, .workspace-topbar { background:#fff; }
+.admin-soft, .quick-actions > a { background:#f8f9fa; }
+.sidebar-brand strong, .account-info strong { color:var(--ink); }
+.sidebar-link, .icon-button, .text-link { color:#43505d; }
+.sidebar-link:hover, .quick-actions > a:hover, .icon-button:hover { background:#f2f4f6; color:var(--ink); }
+.sidebar-link.is-active { background:#fff0e9; color:#a84418; }
+.admin-input, .list-toolbar select { background:#fff; border-color:#cfd5dc; color:var(--ink); }
+.admin-frame select option { background:#fff; color:var(--ink); }
+.admin-frame :is(.text-white,.text-white\/70,.text-white\/72,.text-white\/80,.text-white\/90) { color:var(--ink); }
+.admin-frame :is(.bg-white\/5,.bg-white\/6,.bg-white\/8,.bg-white\/10) { background:#f2f4f6; }
+.admin-frame :is(.border-white\/10,.border-white\/15,.border-white\/20) { border-color:var(--line); }
+.admin-frame .bg-happy-orange, .primary-button { color:#fff; }
+.secondary-button { background:#fff; border-color:#cfd5dc; color:var(--ink); }
+.secondary-button:hover { background:#f4f6f8; }
+.notice { background:#fff5ed; color:#863c19; border-color:#f1ceba; }
+.metric-top p, .orders-table th, .cell-secondary, .destination-cell, .detail-row, .detail-row strong, .quick-actions small { color:#536170; }
+.orders-table th, .orders-table tr:hover td { background:#f7f8fa; }
+.segmented-control { background:#fff; }
+.segmented-control button { color:#536170; }
+.segmented-control button[aria-pressed="true"] { background:#e9edf1; color:var(--ink); }
+.search-field { border-color:#cfd5dc; color:#536170; }
+.search-field:focus-within { border-color:#ef601f; }
+.empty-icon, .count-badge, .account-avatar { background:#f2f4f6; color:#536170; }
+.empty-state h3 { color:var(--ink); }
+
+/* Text contrast on the light theme; the login illustration remains dark. */
+.admin-panel { color:var(--ink); }
+.admin-login-hero { color:#fff; }
+.admin-login-hero .text-white\/62 { color:#e7e9ec; }
+.admin-login-form { color:var(--ink); }
+.admin-login-form [class*="text-white/"] { color:#536170; }
+.admin-login-form input { color:var(--ink); }
+.admin-login-form .bg-happy-orange { color:#fff; }
+.admin-frame [class*="text-white/"] { color:#536170; }
+.admin-frame .text-white { color:var(--ink); }
+.admin-frame .bg-happy-orange { color:#fff; }
+.admin-frame .text-red-100 { color:#991b1b; }
+.admin-frame .text-emerald-200 { color:#166534; }
+.admin-frame .text-red-500 { color:#b91c1c; }
+.admin-frame input::placeholder, .admin-frame textarea::placeholder { color:#687586; }
+.metric-green { --metric-color:#137c59; }
+.metric-blue { --metric-color:#2769aa; }
+.metric-violet { --metric-color:#7352ae; }

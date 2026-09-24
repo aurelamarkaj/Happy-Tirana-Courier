@@ -1,0 +1,11 @@
+# Operational rules (September 2026)
+
+Orders operate every day, 07:00–22:59 Europe/Tirane. Business orders require a Google Maps destination link, customer phone, preparation minutes and a signed order value (negative values are valid). Business users cannot override the transport fee. The server chooses the shortest road distance among Google's returned driving alternatives, ignoring live traffic.
+
+Transport is 300 ALL through 3 km, plus 0.1 ALL per additional metre. A 100 ALL surcharge applies when the destination is outside the circular tariff area covering Mëzez-Fushë, Kodër e Kuqe, Tufinë and Farkë. The independent delivery-coverage polygon remains unchanged and is hidden from the admin tariff map; zone editing is disabled.
+
+First dispatch occurs at minute 9 when preparation is at most 10 minutes, or one minute before readiness otherwise. The nearest eligible rider within 1 km receives the first offer. After 60 seconds the other eligible riders receive it; after another 60 seconds admin is alerted. ELECTRIC riders qualify at any route length; DIESEL riders receive orders over 3 km. A rider may carry at most two active orders. The second must come from a different business and can be accepted only after the first is picked up. The shortest Google-road distance from the first business to the second business and from the first destination to the second destination must each be at most 500 m. The rider can call the customer's phone number directly after accepting an order.
+
+The platform-debit ceiling is 5000 ALL. Separately, completed deliveries add the rider's 80% transport earning to account_balance_all. Admin can record a withdrawal by lowering the remaining balance to a value from 0 to 5000 ALL; the payout is recorded in the existing ledger. Rider and business cannot cancel orders. Admin can cancel an order until delivery; delivered and already cancelled orders cannot be cancelled.
+
+Migrations 015_current_business_rules.sql and 016_refine_tariff_boundary.sql and 017_circular_tariff_boundary.sql upgrade existing data without resetting it. The API applies ordered migrations before starting in Docker. npm test runs unit tests and npm run test:integration creates a temporary PostgreSQL test database for HTTP, Socket.IO, pricing and transaction checks.

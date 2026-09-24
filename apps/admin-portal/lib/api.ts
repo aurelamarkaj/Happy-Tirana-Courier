@@ -2,7 +2,7 @@ const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 const apiTimeoutMs = 12_000;
 
-import { saveAdminSession, type AdminSession } from "./admin-session";
+import { getAdminSession, saveAdminSession, type AdminSession } from "./admin-session";
 
 export class ApiError extends Error {
   code: string;
@@ -19,6 +19,8 @@ export class ApiError extends Error {
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
+  const token=getAdminSession()?.token;
+  if(token) headers.set("Authorization",`Bearer ${token}`);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), apiTimeoutMs);
@@ -91,6 +93,8 @@ export interface AdminRider {
   email: string | null;
   vehicleType: string;
   licenseNumber: string | null;
+  personalId: string | null;
+  accountBalanceAll: number;
   isOnline: boolean;
   status: string;
   lastSeenAt: string | null;
@@ -120,6 +124,7 @@ export interface AdminLiveOrder {
   status: string;
   totalAmount: number;
   businessName: string;
+  businessId: string;
   pickupAddress: string;
   pickupLat: number;
   pickupLng: number;
@@ -167,6 +172,7 @@ export async function createAdminBusiness(input: {
   email?: string;
   password: string;
   addressText: string;
+  googleMapsUrl?: string;
   lat?: number | null;
   lng?: number | null;
   category?: string;
@@ -189,7 +195,8 @@ export async function updateAdminBusiness(
     phone: string;
     email?: string;
     addressText: string;
-    lat?: number | null;
+    googleMapsUrl?: string;
+  lat?: number | null;
     lng?: number | null;
     category?: string;
     status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
@@ -233,8 +240,9 @@ export async function createAdminRider(input: {
   phone: string;
   email?: string;
   password: string;
-  vehicleType?: "MOTORBIKE" | "DIESEL";
+  vehicleType?: "ELECTRIC" | "DIESEL";
   licenseNumber?: string;
+  personalId?: string;
   status?: "ACTIVE" | "INACTIVE" | "SUSPENDED";
 }) {
   return apiFetch<{ rider: AdminRider }>("/admin/riders", {
@@ -249,8 +257,9 @@ export async function updateAdminRider(
     name: string;
     phone: string;
     email?: string;
-    vehicleType: "MOTORBIKE" | "DIESEL";
+    vehicleType: "ELECTRIC" | "DIESEL";
     licenseNumber?: string;
+  personalId?: string;
     status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
   },
 ) {
@@ -324,4 +333,33 @@ export async function getPublicRoute(input: {
 
 export async function getAdminFinance() {
   return apiFetch<AdminFinance>("/admin/finance");
+}
+
+export async function cancelAdminOrder(id:string) {
+  return apiFetch<{ok:boolean}>(`/admin/orders/${id}/cancel`,{method:"PATCH"});
+}
+
+export interface AdminBusinessOrder {
+  id: string; code: string; status: string; createdAt: string;
+  productValue: number; transportFee: number; totalAmount: number;
+  riderEarning: number; dropoffAddress: string;
+}
+export interface AdminOrder extends AdminBusinessOrder {
+  businessId: string; businessName: string; customerName: string | null;
+}
+export async function getAdminOrders(input: {q?: string; status?: string; page?: number} = {}) {
+  const query = new URLSearchParams();
+  if (input.q) query.set("q", input.q);
+  if (input.status) query.set("status", input.status);
+  if (input.page) query.set("page", String(input.page));
+  return apiFetch<{total:number;page:number;orders:AdminOrder[]}>(`/admin/orders?${query}`);
+}
+export async function getAdminBusinessOrders(id: string) {
+  return apiFetch<{business: {id:string;name:string;category:string|null};orders:AdminBusinessOrder[]}>(`/admin/businesses/${id}/orders`);
+}
+
+export async function setRiderAccountBalance(id:string,balance:number){
+ return apiFetch<{balance:number;withdrawal:number}>(`/admin/riders/${id}/account-balance`,{
+  method:"PATCH",body:JSON.stringify({balance})
+ });
 }

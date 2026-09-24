@@ -170,6 +170,16 @@ em {
   place-items: center;
 }
 
+:root, body { background:#fff; color:#18212b; }
+.rider-page { background:#fff; color:#18212b; }
+.rider-panel { background:#fff; border-color:#e2e5e9; color:#18212b; }
+.rider-soft { background:#f8f9fa; border-color:#e2e5e9; }
+.rider-page.text-white, .rider-panel :is(.text-white,.text-white\/55,.text-white\/58,.text-white\/70,.text-white\/72) { color:#18212b; }
+.rider-panel [class*="text-white/"] { color:#536170; }
+.rider-panel input { color:#18212b; }
+.rider-panel input::placeholder { color:#687586; }
+.rider-panel .bg-happy-orange { color:#fff; }
+
 .rider-map-pin {
   background: #ffffff;
   border: 6px solid #ff5500;

@@ -294,9 +294,9 @@ export default function AdminHome() {
                     <tr key={order.id}>
                       <td>
                         <strong>{order.code}</strong>
-                        <span className="cell-secondary">
+                        <Link className="cell-secondary text-link" href={`/businesses/${order.businessId}/orders`}>
                           {order.businessName}
-                        </span>
+                        </Link>
                       </td>
                       <td className="destination-cell">
                         {order.dropoffAddress}

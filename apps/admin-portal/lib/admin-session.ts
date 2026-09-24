@@ -8,6 +8,7 @@ export interface AdminSession {
   email: string;
   phone: string | null;
   role: string;
+  token?: string;
 }
 
 export function getAdminSession() {
@@ -18,7 +19,7 @@ export function getAdminSession() {
 
   try {
     const session = JSON.parse(raw) as AdminSession;
-    return session.id && session.email ? session : null;
+    return session.id && session.email && session.token ? session : null;
   } catch {
     return null;
   }

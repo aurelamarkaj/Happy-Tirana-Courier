@@ -108,6 +108,8 @@ export class BusinessApiError extends Error {
 async function businessFetch<T>(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
+  const token = getBusinessSession()?.token;
+  if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
   if (!response.ok) {
@@ -178,15 +180,14 @@ export async function getBusinessDashboard(businessId = activeBusinessId()) {
 
 export async function createBusinessOrder(
   input: {
-    customerName: string;
+    customerName?: string;
     customerPhone: string;
     addressText?: string;
     lat?: number;
     lng?: number;
-    googleMapsUrl?: string;
-    readyMinutes?: number;
-    transportFeeOverride?: number;
-    items: Array<{ name: string; price: number }>;
+    googleMapsUrl: string;
+    readyMinutes: number;
+    orderValue: number;
     productDescription?: string;
   },
   businessId = activeBusinessId(),
@@ -212,8 +213,7 @@ export async function quoteBusinessOrder(
     addressText?: string;
     lat?: number;
     lng?: number;
-    googleMapsUrl?: string;
-    transportFeeOverride?: number;
+    googleMapsUrl: string;
   },
   businessId = activeBusinessId(),
 ) {
@@ -223,6 +223,13 @@ export async function quoteBusinessOrder(
       method: "POST",
       body: JSON.stringify(input),
     },
+  );
+}
+
+export async function previewBusinessLocation(googleMapsUrl: string, businessId = activeBusinessId()) {
+  return businessFetch<{location:{lat:number;lng:number;addressText:string;originalUrl:string}}>(
+    `/businesses/${businessId}/orders/location`,
+    {method:"POST",body:JSON.stringify({googleMapsUrl})},
   );
 }
 

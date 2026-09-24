@@ -56,9 +56,26 @@ export async function getGoogleRoadRoute(
   apiKey: string,
   input: RouteInput,
   options: { allowEstimate?: boolean } = {},
-) {
+): Promise<{distanceMeters:number;durationSeconds:number;encodedPolyline:string;source:string}> {
+  if (input.intermediates?.length) {
+    const points = [{lat:input.originLat,lng:input.originLng}, ...input.intermediates,
+      {lat:input.destinationLat,lng:input.destinationLng}];
+    const legs = [];
+    for (let i=1; i<points.length; i++) {
+      legs.push(await getGoogleRoadRoute(apiKey, {
+        originLat:points[i-1].lat, originLng:points[i-1].lng,
+        destinationLat:points[i].lat, destinationLng:points[i].lng,
+      }, options));
+    }
+    return {
+      distanceMeters:legs.reduce((sum,leg)=>sum+leg.distanceMeters,0),
+      durationSeconds:legs.reduce((sum,leg)=>sum+leg.durationSeconds,0),
+      encodedPolyline:encodePolyline(legs.flatMap(leg=>decodePolyline(leg.encodedPolyline))),
+      source:"GOOGLE_ROUTES_SHORTEST_ROAD_IGNORE_TRAFFIC",
+    };
+  }
   if (!apiKey || apiKey.toLowerCase().includes("replace-with")) {
-    if (options.allowEstimate === false)
+    if (options.allowEstimate !== true)
       throw new Error("GOOGLE_DIRECTIONS_API_KEY_REQUIRED");
     return getEstimatedRoadRoute(input);
   }
@@ -137,7 +154,7 @@ export async function getGoogleRoadRoute(
       source: "GOOGLE_ROUTES_SHORTEST_ROAD_IGNORE_TRAFFIC",
     };
   } catch (error) {
-    if (options.allowEstimate === false) {
+    if (options.allowEstimate !== true) {
       if (
         error instanceof Error &&
         error.message.startsWith("GOOGLE_DIRECTIONS_")
@@ -147,4 +164,26 @@ export async function getGoogleRoadRoute(
     }
     return getEstimatedRoadRoute(input);
   }
+}
+
+function decodePolyline(encoded: string): number[][] {
+  let index=0, lat=0, lng=0;
+  const points:number[][]=[];
+  function value() {
+    let result=0, shift=0, byte;
+    do { byte=encoded.charCodeAt(index++)-63; result|=(byte&31)<<shift; shift+=5; } while(byte>=32 && index<encoded.length);
+    return result&1 ? ~(result>>1) : result>>1;
+  }
+  while(index<encoded.length) {lat+=value();lng+=value();points.push([lat,lng]);}
+  return points;
+}
+function encodePolyline(points:number[][]):string {
+  let lat=0,lng=0,result="";
+  function value(delta:number) {
+    let n=delta<0 ? ~(delta<<1) : delta<<1;
+    while(n>=32) {result+=String.fromCharCode((32|(n&31))+63);n>>=5;}
+    result+=String.fromCharCode(n+63);
+  }
+  for(const p of points) {value(p[0]-lat);value(p[1]-lng);[lat,lng]=p;}
+  return result;
 }

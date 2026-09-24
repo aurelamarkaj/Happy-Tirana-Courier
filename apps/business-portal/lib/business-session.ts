@@ -3,6 +3,7 @@
 const businessStorageKey = "happy-tirana-business-session-v1";
 
 export interface BusinessSession {
+  token: string;
   id: string;
   userId: string;
   name: string;
@@ -21,7 +22,7 @@ export function getBusinessSession() {
 
   try {
     const session = JSON.parse(raw) as BusinessSession;
-    return session.id ? session : null;
+    return session.id && session.token ? session : null;
   } catch {
     return null;
   }

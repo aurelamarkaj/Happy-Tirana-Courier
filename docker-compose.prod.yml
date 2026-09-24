@@ -2,6 +2,7 @@ name: happy-tirana
 
 x-app: &app
   image: happy-tirana-app:demo
+  pull_policy: never
   restart: unless-stopped
 
 services:
@@ -11,12 +12,11 @@ services:
     environment:
       POSTGRES_DB: happy_tirana
       POSTGRES_USER: happy
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./packages/db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U happy -d happy_tirana"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U happy -d happy_tirana"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -30,18 +30,19 @@ services:
         NEXT_PUBLIC_SOCKET_URL: ${PUBLIC_URL}
         NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
         NEXT_PUBLIC_GOOGLE_MAPS_ENABLED: ${NEXT_PUBLIC_GOOGLE_MAPS_ENABLED:-true}
-    command: ["./node_modules/.bin/tsx", "apps/api/src/server.ts"]
+    command: ["sh", "-c", "npm run migrate -w @happy-tirana/db && exec ./node_modules/.bin/tsx apps/api/src/server.ts"]
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      JWT_SECRET: ${JWT_SECRET}
-      CORS_ORIGINS: ${PUBLIC_URL}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env.production}
+      CORS_ORIGINS: ${CORS_ORIGINS:-${PUBLIC_URL}}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
       GOOGLE_MAPS_HTTP_REFERRER: ${PUBLIC_URL}/
-      RIDER_DEBIT_LIMIT_ALL: ${RIDER_DEBIT_LIMIT_ALL:-10000}
+      RIDER_DEBIT_LIMIT_ALL: ${RIDER_DEBIT_LIMIT_ALL:-5000}
       NEARBY_RIDER_RADIUS_METERS: ${NEARBY_RIDER_RADIUS_METERS:-1000}
       OFFER_ESCALATION_SECONDS: ${OFFER_ESCALATION_SECONDS:-60}
-      ADMIN_UNASSIGNED_ALERT_MINUTES: ${ADMIN_UNASSIGNED_ALERT_MINUTES:-5}
-      PORT: ${PORT:-4000}
+      SECOND_ORDER_BUSINESS_RADIUS_METERS: ${SECOND_ORDER_BUSINESS_RADIUS_METERS:-500}
+      SECOND_ORDER_DESTINATION_RADIUS_METERS: ${SECOND_ORDER_DESTINATION_RADIUS_METERS:-500}
+      PORT: 4000
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,16 +85,23 @@ services:
     depends_on:
       api:
         condition: service_healthy
+        restart: true
       admin:
         condition: service_started
+        restart: true
       business:
         condition: service_started
+        restart: true
       rider:
         condition: service_started
+        restart: true
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "127.0.0.1:13305:8080"
+      - "127.0.0.1:3000:8080"
+      - "127.0.0.1:3001:8080"
+      - "127.0.0.1:3002:8080"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/gateway-health"]
       interval: 10s

@@ -17,6 +17,7 @@ import {
   createAdminRider,
   formatLek,
   getAdminRiders,
+  setRiderAccountBalance,
   updateAdminRider,
   type AdminRider,
 } from "../../lib/api";
@@ -26,8 +27,9 @@ const emptyForm = {
   phone: "",
   email: "",
   password: "",
-  vehicleType: "MOTORBIKE",
+  vehicleType: "ELECTRIC",
   licenseNumber: "",
+  personalId: "",
   status: "ACTIVE",
 };
 
@@ -38,7 +40,7 @@ const statusOptions = [
 ];
 
 const vehicleOptions = [
-  { value: "MOTORBIKE", label: "Motor" },
+  { value: "ELECTRIC", label: "Elektrik" },
   { value: "DIESEL", label: "Diesel" },
 ];
 
@@ -52,6 +54,8 @@ export default function RidersPage() {
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [fleetFilter, setFleetFilter] = useState("ALL");
+  const [payoutRider, setPayoutRider] = useState<AdminRider | null>(null);
+  const [remainingBalance, setRemainingBalance] = useState("");
   const filteredRiders = riders.filter(
     (rider) =>
       (fleetFilter === "ALL" ||
@@ -106,8 +110,9 @@ export default function RidersPage() {
         phone: form.phone,
         email: form.email,
         password: form.password,
-        vehicleType: form.vehicleType as "MOTORBIKE" | "DIESEL",
+        vehicleType: form.vehicleType as "ELECTRIC" | "DIESEL",
         licenseNumber: form.licenseNumber,
+        personalId: form.personalId,
         status: form.status as "ACTIVE" | "INACTIVE" | "SUSPENDED",
       };
       if (editingId) {
@@ -143,10 +148,30 @@ export default function RidersPage() {
       password: "",
       vehicleType: rider.vehicleType,
       licenseNumber: rider.licenseNumber ?? "",
+      personalId: rider.personalId ?? "",
       status: rider.status,
     });
     setShowForm(true);
     setMessage("");
+  }
+
+  async function recordPayout(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!payoutRider) return;
+    const balance = Number(remainingBalance);
+    if (!Number.isFinite(balance) || balance < 0 || balance > 5000 || balance > payoutRider.accountBalanceAll) {
+      setMessage("Gjendja e re duhet të jetë nga 0 deri në 5000 ALL dhe nuk mund të rritet gjatë tërheqjes.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await setRiderAccountBalance(payoutRider.id, balance);
+      setPayoutRider(null);
+      await loadRiders();
+      setMessage(`Tërheqja prej ${formatLek(result.withdrawal)} u regjistrua.`);
+    } catch {
+      setMessage("Tërheqja nuk u regjistrua. Rifresko gjendjen dhe provo përsëri.");
+    } finally { setSaving(false); }
   }
 
   return (
@@ -276,7 +301,7 @@ export default function RidersPage() {
                 ))}
               </select>
             </Field>
-            <Field label="Targa / ID dokumenti">
+            <Field label="Targa (opsionale)">
               <input
                 className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
                 onChange={(event) =>
@@ -285,6 +310,10 @@ export default function RidersPage() {
                 placeholder="P.sh. TR-HTC-24"
                 value={form.licenseNumber}
               />
+            </Field>
+            <Field label="ID personale (opsionale)">
+              <input className="admin-input h-11 w-full rounded-xl border px-3" value={form.personalId}
+                onChange={(event)=>setForm({...form,personalId:event.target.value})} />
             </Field>
             <Field label="Statusi i motoristit">
               <select
@@ -306,7 +335,7 @@ export default function RidersPage() {
               </select>
             </Field>
             <button
-              className="type-cta flex h-11 items-center justify-center rounded-xl bg-happy-orange text-white happy-pill-shadow"
+              className="type-cta col-span-full flex h-11 w-full items-center justify-center rounded-xl bg-happy-orange text-white happy-pill-shadow"
               disabled={saving}
               type="submit"
             >
@@ -360,7 +389,7 @@ export default function RidersPage() {
             <option value="ALL">E gjithe flota</option>
             <option value="ONLINE">Online</option>
             <option value="BLOCKED">Bllokuar nga debiti</option>
-            <option value="MOTORBIKE">Motor</option>
+            <option value="ELECTRIC">Elektrik</option>
             <option value="DIESEL">Diesel</option>
           </select>
         </div>
@@ -415,8 +444,14 @@ export default function RidersPage() {
                   Debit {formatLek(rider.platformDue)} / limit{" "}
                   {formatLek(rider.debitLimitAll)}
                 </p>
+                <p className="type-secondary mt-1">Fitime për t’u tërhequr: <strong>{formatLek(rider.accountBalanceAll)}</strong></p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button className="secondary-button" type="button" onClick={() => {
+                  setPayoutRider(rider);
+                  setRemainingBalance(String(Math.min(rider.accountBalanceAll, 5000)));
+                  setMessage("");
+                }}>Regjistro tërheqje</button>
                 <button
                   aria-label={`Ndrysho ${rider.name}`}
                   className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 text-white/70 hover:border-happy-orange/50 hover:text-happy-orange"
@@ -444,6 +479,15 @@ export default function RidersPage() {
           ))}
         </div>
       </section>
+      {payoutRider && <section className="admin-panel rounded-2xl border p-5">
+        <h2 className="type-section-title">Tërheqja e {payoutRider.name}</h2>
+        <p className="type-secondary mt-2">Gjendja aktuale: {formatLek(payoutRider.accountBalanceAll)}. Vendos gjendjen që mbetet pas tërheqjes.</p>
+        <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={recordPayout}>
+          <Field label="Gjendja e re (0–5000 ALL)"><input className="admin-input h-11 rounded-xl border px-3" type="number" min="0" max="5000" step="0.01" required value={remainingBalance} onChange={event => setRemainingBalance(event.target.value)} /></Field>
+          <button className="primary-button" disabled={saving} type="submit">Konfirmo tërheqjen</button>
+          <button className="secondary-button" type="button" onClick={() => setPayoutRider(null)}>Mbyll</button>
+        </form>
+      </section>}
     </AdminShell>
   );
 }

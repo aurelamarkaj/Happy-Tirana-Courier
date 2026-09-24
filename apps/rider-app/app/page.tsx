@@ -36,6 +36,7 @@ import {
   type RoutePoint,
 } from "../lib/api";
 import { riderNavigation } from "../components/rider-navigation";
+import { acceptErrorMessage } from "../lib/accept-error";
 import { getRiderSession } from "../lib/rider-session";
 
 const apiBaseUrl =
@@ -61,14 +62,16 @@ export default function RiderHome() {
       return;
     }
     refreshDashboard();
+    const timer = setInterval(refreshDashboard, 15000);
+    return () => clearInterval(timer);
   }, [router]);
 
   useEffect(() => {
     const session = getRiderSession();
     if (!session) return;
 
-    const socket = io(apiBaseUrl);
-    socket.emit("rider.join", session.id);
+    const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL ?? apiBaseUrl.replace(/\/api\/?$/, ""));
+    socket.on("connect", () => { socket.emit("rider.join", session.token); refreshDashboard(); });
     socket.on(
       "order.offered",
       (payload?: { message?: string; distanceMeters?: number | null }) => {
@@ -209,6 +212,7 @@ export default function RiderHome() {
   }
 
   async function accept(order: RiderOrder) {
+    if (!dashboard?.operationalWindow.isOpen || dashboard.activeOrders.length >= 2) { setMessage("Pranimi është mbyllur ose ke 2 porosi aktive."); return; }
     setBusy(true);
     try {
       await acceptOrder(order.id);
@@ -216,9 +220,7 @@ export default function RiderHome() {
       router.push("/delivery");
     } catch (error) {
       await refreshDashboard();
-      setMessage(error instanceof RiderApiError && error.code === "RIDER_ORDER_CAPACITY_REACHED"
-        ? "Ke katër porosi aktive. Përfundo një dorëzim para se të pranosh një tjetër."
-        : "Porosia u mor nga dikush tjeter ose oferta skadoi.");
+      setMessage(acceptErrorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -610,6 +612,7 @@ function RiderOrderMobileCard({
           <h3 className="type-restaurant mt-1 truncate">
             {order.businessName}
           </h3>
+          {order.businessCategory && <p className="type-secondary">{order.businessCategory}</p>}
           <p className="type-secondary mt-1 truncate text-white/42">
             {order.businessPhone ?? "Pa telefon"}
           </p>
@@ -633,8 +636,9 @@ function RiderOrderMobileCard({
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
+        <MobileMoney label="Paguan biznesit" value={order.productValue} />
         <MobileMoney label="Fitimi 80%" value={order.riderEarning} />
-        <MobileMoney label="Arketon" value={order.totalAmount} />
+        <MobileMoney label="Arkëton nga klienti" value={order.totalAmount} />
       </div>
 
       {showActions ? (
@@ -693,6 +697,7 @@ function RiderOrderRow({
       </td>
       <td className="px-4 py-4">
         <p className="type-product truncate">{order.businessName}</p>
+        {order.businessCategory && <p className="type-secondary">{order.businessCategory}</p>}
         <p className="type-secondary mt-1 truncate text-white/42">
           {order.businessPhone ?? "Pa telefon"}
         </p>
@@ -720,7 +725,7 @@ function RiderOrderRow({
           {formatLek(order.riderEarning)}
         </strong>
         <p className="type-secondary mt-1 text-white/38">
-          Total {formatLek(order.totalAmount)}
+          Biznesit {formatLek(order.productValue)} · Klientit {formatLek(order.totalAmount)}
         </p>
       </td>
       <td className="px-4 py-4">

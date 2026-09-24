@@ -1,5 +1,7 @@
 "use client";
 
+import { RouteLine } from "../../components/rider-contact-line";
+
 import {
   Bike,
   CheckCircle2,
@@ -28,6 +30,7 @@ import {
   type RiderOrder,
 } from "../../lib/api";
 import { getRiderSession } from "../../lib/rider-session";
+import { acceptErrorMessage } from "../../lib/accept-error";
 
 export default function DeliveryPage() {
   const router = useRouter();
@@ -82,18 +85,14 @@ export default function DeliveryPage() {
   );
 
   async function accept(orderToAccept: RiderOrder) {
+    if (!dashboard?.operationalWindow.isOpen || dashboard.activeOrders.length >= 2) { setMessage("Pranimi është mbyllur ose ke 2 porosi aktive."); return; }
     setBusy(true);
     try {
       await acceptOrder(orderToAccept.id);
       await refresh();
     } catch (error) {
       await refresh();
-      setMessage(
-        error instanceof RiderApiError &&
-          error.code === "RIDER_ORDER_CAPACITY_REACHED"
-          ? "Ke katër porosi aktive. Përfundo një dorëzim para se të pranosh një tjetër."
-          : "Porosia u mor nga dikush tjeter ose oferta skadoi.",
-      );
+      setMessage(acceptErrorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -111,7 +110,7 @@ export default function DeliveryPage() {
     }
   }
 
-  async function setStatus(status: "PICKED_UP" | "DELIVERED" | "CANCELLED") {
+  async function setStatus(status: "PICKED_UP" | "DELIVERED") {
     if (!order) return;
     setBusy(true);
     try {
@@ -202,18 +201,19 @@ export default function DeliveryPage() {
                   label="Dorezo te klienti"
                   value={order.dropoffAddress}
                 />
-                {order.customerPhone ? (
+                {!isOffer && order.customerPhone ? (
                   <RouteLine
                     icon={Phone}
                     label={order.customerName ?? "Klienti"}
                     value={order.customerPhone}
+                    phone
                   />
                 ) : null}
               </div>
 
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <Money label="Paguan biznesit" value={order.productValue} />
-                <Money label="Arketon klientit" value={order.totalAmount} />
+                <Money label="Arkëton nga klienti" value={order.totalAmount} />
                 <Money label="Fitimi yt 80%" value={order.riderEarning} />
                 <Money label="Platforma 20%" value={order.platformCommission} />
               </div>
@@ -222,7 +222,7 @@ export default function DeliveryPage() {
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   <button
                     className="type-cta flex h-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"
-                    disabled={busy}
+                    disabled={busy || dashboard?.operationalDay === false}
                     onClick={() => reject(order)}
                     type="button"
                   >
@@ -231,7 +231,7 @@ export default function DeliveryPage() {
                   </button>
                   <button
                     className="type-cta flex h-14 items-center justify-center rounded-2xl bg-happy-orange text-white happy-pill-shadow"
-                    disabled={busy}
+                    disabled={busy || dashboard?.operationalDay === false}
                     onClick={() => accept(order)}
                     type="button"
                   >
@@ -241,6 +241,15 @@ export default function DeliveryPage() {
                 </div>
               ) : (
                 <div className="mt-5 space-y-3">
+                  {order.customerPhone ? (
+                    <a
+                      className="type-cta flex h-14 w-full items-center justify-center rounded-2xl border border-happy-orange/35 bg-happy-orange/10 text-happy-orange"
+                      href={`tel:${order.customerPhone.replace(/[^+\d]/g, "")}`}
+                    >
+                      <Phone className="mr-2 h-5 w-5" />
+                      Telefono klientin · {order.customerPhone}
+                    </a>
+                  ) : null}
                   <a
                     className="type-cta flex h-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/80"
                     href={navigationUrl}
@@ -253,7 +262,7 @@ export default function DeliveryPage() {
                   {order.status === "ACCEPTED" ? (
                     <button
                       className="type-cta flex h-14 w-full items-center justify-center rounded-2xl bg-happy-orange text-white happy-pill-shadow"
-                      disabled={busy}
+                      disabled={busy || dashboard?.operationalDay === false}
                       onClick={() => setStatus("PICKED_UP")}
                       type="button"
                     >
@@ -264,7 +273,7 @@ export default function DeliveryPage() {
                   {order.status === "PICKED_UP" ? (
                     <button
                       className="type-cta flex h-14 w-full items-center justify-center rounded-2xl bg-happy-orange text-white happy-pill-shadow"
-                      disabled={busy}
+                      disabled={busy || dashboard?.operationalDay === false}
                       onClick={() => setStatus("DELIVERED")}
                       type="button"
                     >
@@ -272,14 +281,6 @@ export default function DeliveryPage() {
                       Dorezova porosine
                     </button>
                   ) : null}
-                  <button
-                    className="type-warning w-full text-white/45"
-                    disabled={busy}
-                    onClick={() => setStatus("CANCELLED")}
-                    type="button"
-                  >
-                    Anulo per problem
-                  </button>
                 </div>
               )}
             </section>
@@ -330,26 +331,6 @@ export default function DeliveryPage() {
         />
       </section>
     </OperationsShell>
-  );
-}
-
-function RouteLine({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Bike;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rider-soft flex items-center gap-3 rounded-2xl border p-4">
-      <Icon className="h-5 w-5 shrink-0 text-happy-orange" />
-      <div className="min-w-0">
-        <p className="type-badge uppercase text-white/42">{label}</p>
-        <p className="type-body break-words">{value}</p>
-      </div>
-    </div>
   );
 }
 

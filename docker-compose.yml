@@ -1,23 +1,6 @@
-services:
-  postgres:
-    image: postgis/postgis:16-3.4
-    platform: linux/amd64
-    container_name: happy-tirana-postgis
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: happy_tirana
-      POSTGRES_USER: happy
-      POSTGRES_PASSWORD: happy
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./packages/db/migrations:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U happy -d happy_tirana"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+name: happy-tirana
 
-volumes:
-  postgres-data:
+# Load deployment variables for the included stack, including plain compose up.
+include:
+  - path: docker-compose.prod.yml
+    env_file: .env.production

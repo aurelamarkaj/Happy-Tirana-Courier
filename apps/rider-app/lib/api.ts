@@ -29,6 +29,7 @@ export interface RiderOrder {
   code: string;
   status: OrderStatus;
   businessName: string;
+  businessCategory?: string | null;
   businessPhone: string | null;
   pickupAddress: string;
   pickupLat: number;
@@ -67,14 +68,19 @@ export interface RiderMetrics {
   todayEarnings: number;
   weekEarnings: number;
   platformDue: number;
+  accountBalanceAll?: number;
 }
 
 export interface RiderDashboard {
+  operationalWindow: { isOpen: boolean };
+  operationalDay: boolean;
+  maxActiveOrders: number;
   rider: RiderSession & {
     isOnline: boolean;
     status: string;
     lastSeenAt: string | null;
     platformDue: number;
+  accountBalanceAll?: number;
     debitLimitAll: number;
     isDebitBlocked: boolean;
   };
@@ -105,7 +111,7 @@ async function riderFetch<T>(path: string, init: RequestInit = {}) {
   headers.set("Content-Type", "application/json");
 
   const session = getRiderSession();
-  if (session) headers.set("x-rider-id", session.id);
+  if (session) headers.set("Authorization", `Bearer ${session.token}`);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), apiTimeoutMs);
@@ -206,7 +212,7 @@ export async function rejectOrder(orderId: string) {
 
 export async function updateOrderStatus(
   orderId: string,
-  status: "PICKED_UP" | "DELIVERED" | "CANCELLED",
+  status: "PICKED_UP" | "DELIVERED",
 ) {
   const session = getRiderSession();
   if (!session) throw new RiderApiError(401, "RIDER_LOGIN_REQUIRED");

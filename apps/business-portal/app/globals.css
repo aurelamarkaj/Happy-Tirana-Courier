@@ -168,3 +168,15 @@ button {
 .happy-pill-shadow {
   box-shadow: 0 16px 38px rgba(255, 85, 0, 0.25);
 }
+
+:root, body { background:#fff; color:#18212b; }
+.business-page { background:#fff; color:#18212b; }
+.business-panel { background:#fff; border-color:#e2e5e9; color:#18212b; }
+.business-soft { background:#f8f9fa; border-color:#e2e5e9; }
+.business-input { background:#fff; border-color:#cfd5dc; color:#18212b; }
+.business-input::placeholder { color:#7b8793; }
+.business-page.text-white, .business-panel :is(.text-white,.text-white\/55,.text-white\/58,.text-white\/70,.text-white\/72) { color:#18212b; }
+.business-panel [class*="text-white/"] { color:#536170; }
+.business-panel input { color:#18212b; }
+.business-panel input::placeholder { color:#687586; }
+.business-panel .bg-happy-orange { color:#fff; }

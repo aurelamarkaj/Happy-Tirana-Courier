@@ -22,12 +22,13 @@ import {
   useMemo,
   useState,
 } from "react";
+import Link from "next/link";
 import { AdminMetric, AdminShell } from "../../components/admin-shell";
 import {
   createAdminBusiness,
   createAdminBusinessCategory,
-  getAdminBusinesses,
   getAdminBusinessCategories,
+  getAdminBusinesses,
   updateAdminBusiness,
   type AdminBusiness,
   type AdminBusinessCategory,
@@ -40,9 +41,8 @@ const emptyForm = {
   email: "",
   password: "",
   addressText: "",
-  lat: "",
-  lng: "",
-  category: "Ushqime",
+  googleMapsUrl: "",
+  category: "",
   status: "ACTIVE",
   coverImageUrl: "",
   description: "",
@@ -58,13 +58,12 @@ export default function BusinessesPage() {
   const [businesses, setBusinesses] = useState<AdminBusiness[]>([]);
   const [categories, setCategories] = useState<AdminBusinessCategory[]>([]);
   const [form, setForm] = useState(emptyForm);
-  const [categoryForm, setCategoryForm] = useState({
-    name: "",
-  });
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
+  const [categoryName, setCategoryName] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingCategories, setLoadingCategories] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingCategory, setSavingCategory] = useState(false);
   const [message, setMessage] = useState("");
@@ -82,28 +81,25 @@ export default function BusinessesPage() {
   async function loadBusinesses() {
     setLoading(true);
     try {
-      const [businessData, categoryData] = await Promise.all([
-        getAdminBusinesses(),
-        getAdminBusinessCategories(),
-      ]);
+      const businessData = await getAdminBusinesses();
       setBusinesses(businessData.businesses);
-      setCategories(categoryData.categories);
-      if (
-        !categoryData.categories.some(
-          (category) => category.name === form.category,
-        ) &&
-        categoryData.categories[0]
-      ) {
-        setForm((current) => ({
-          ...current,
-          category: categoryData.categories[0].name,
-        }));
-      }
       setMessage("");
     } catch {
-      setMessage("Nuk u lexuan bizneset/kategorite Përditësim i porosisë.");
+      setMessage("Nuk u lexuan bizneset. Provo përsëri.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadCategories() {
+    setLoadingCategories(true);
+    try {
+      const data = await getAdminBusinessCategories();
+      setCategories(data.categories);
+    } catch {
+      setMessage("Kategoritë nuk u ngarkuan. Rifresko faqen dhe provo përsëri.");
+    } finally {
+      setLoadingCategories(false);
     }
   }
 
@@ -111,7 +107,10 @@ export default function BusinessesPage() {
     setShowForm(
       new URLSearchParams(window.location.search).get("create") === "1",
     );
-    void loadBusinesses();
+    void (async () => {
+      await loadBusinesses();
+      await loadCategories();
+    })();
   }, []);
 
   const metrics = useMemo(
@@ -120,9 +119,9 @@ export default function BusinessesPage() {
         .length,
       accepting: businesses.filter((business) => business.status === "ACTIVE")
         .length,
-      categories: categories.filter((category) => category.active).length,
+      total: businesses.length,
     }),
-    [businesses, categories],
+    [businesses],
   );
 
   async function submitBusiness(event: FormEvent<HTMLFormElement>) {
@@ -138,8 +137,7 @@ export default function BusinessesPage() {
         email: form.email,
         password: form.password,
         addressText: form.addressText,
-        lat: form.lat ? Number(form.lat) : null,
-        lng: form.lng ? Number(form.lng) : null,
+        googleMapsUrl: form.googleMapsUrl,
         category: form.category,
         status: form.status as "ACTIVE" | "INACTIVE" | "SUSPENDED",
         etaMinutes: 25,
@@ -170,6 +168,33 @@ export default function BusinessesPage() {
     }
   }
 
+  async function submitCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = categoryName.trim();
+    if (name.length < 2) {
+      setMessage("Emri i kategorisë duhet të ketë të paktën 2 karaktere.");
+      return;
+    }
+    if (categories.some((category) => category.name.toLocaleLowerCase("sq-AL") === name.toLocaleLowerCase("sq-AL"))) {
+      setMessage("Kjo kategori ekziston tashmë.");
+      return;
+    }
+    setSavingCategory(true);
+    setMessage("");
+    try {
+      const { category } = await createAdminBusinessCategory({ name });
+      setCategories((current) => [...current, category].sort((a, b) =>
+        a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "sq-AL")));
+      setCategoryName("");
+      setShowCategoryForm(false);
+      setMessage(`Kategoria “${name}” u shtua me sukses.`);
+    } catch {
+      setMessage("Kategoria nuk u ruajt. Provo përsëri.");
+    } finally {
+      setSavingCategory(false);
+    }
+  }
+
   function editBusiness(business: AdminBusiness) {
     setEditingId(business.id);
     setForm({
@@ -179,8 +204,7 @@ export default function BusinessesPage() {
       email: business.email ?? "",
       password: "",
       addressText: business.addressText,
-      lat: business.lat == null ? "" : String(business.lat),
-      lng: business.lng == null ? "" : String(business.lng),
+      googleMapsUrl: business.lat == null || business.lng == null ? "" : `https://www.google.com/maps?q=${business.lat},${business.lng}`,
       category: business.category ?? "Te tjera",
       status: business.status,
       coverImageUrl: business.coverImageUrl ?? "",
@@ -188,30 +212,6 @@ export default function BusinessesPage() {
     });
     setShowForm(true);
     setMessage("");
-  }
-
-  async function submitCategory(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!categoryForm.name.trim()) return;
-
-    setSavingCategory(true);
-    setMessage("");
-    try {
-      const data = await createAdminBusinessCategory({
-        name: categoryForm.name.trim(),
-        sortOrder: 50,
-      });
-      setCategoryForm({ name: "" });
-      setForm((current) => ({ ...current, category: data.category.name }));
-      await loadBusinesses();
-      setMessage("Kategoria u krijua dhe është gati për t’u përdorur.");
-    } catch {
-      setMessage(
-        "Kategoria nuk u ruajt. Kontrollo nëse ky emër ekziston dhe provo përsëri.",
-      );
-    } finally {
-      setSavingCategory(false);
-    }
   }
 
   function handleCoverUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -254,20 +254,16 @@ export default function BusinessesPage() {
             {showForm ? "Mbyll formen" : "Krijo biznes"}
           </button>
           <button
-            className="type-cta flex h-11 w-full items-center justify-center rounded-xl bg-white/10 px-4 text-white hover:bg-white/15 sm:w-auto"
+            className="secondary-button flex h-11 w-full items-center justify-center px-4 sm:w-auto"
             onClick={() => setShowCategoryForm((current) => !current)}
             type="button"
           >
-            {showCategoryForm ? (
-              <X className="mr-2 h-5 w-5" />
-            ) : (
-              <Tags className="mr-2 h-5 w-5 text-happy-orange" />
-            )}
-            {showCategoryForm ? "Mbyll kategorine" : "Krijo kategori"}
+            {showCategoryForm ? <X className="mr-2 h-5 w-5" /> : <Tags className="mr-2 h-5 w-5" />}
+            {showCategoryForm ? "Mbyll kategorinë" : "Krijo kategori"}
           </button>
         </div>
       }
-      description="Krijo kredenciale per bizneset, vendos kategorine, statusin dhe foton. Koha e dergeses llogaritet automatikisht nga distanca me klientin."
+      description="Krijo kredenciale per bizneset, vendos lokacionin, statusin dhe foton. Koha e dergeses llogaritet automatikisht nga distanca me klientin."
       eyebrow="Menaxhim"
       title="Biznese"
     >
@@ -287,12 +283,43 @@ export default function BusinessesPage() {
         />
         <AdminMetric
           icon={Store}
-          label="Kategori"
-          value={String(metrics.categories)}
+          label="Biznese gjithsej"
+          value={String(metrics.total)}
           tone="blue"
           loading={loading}
         />
       </section>
+
+      {showCategoryForm ? (
+        <section className="admin-panel rounded-3xl border p-4 shadow-happy md:p-5">
+          <p className="type-badge uppercase tracking-wide text-happy-orange">Kategoritë</p>
+          <h2 className="type-section-title mt-1">Shto kategori biznesi</h2>
+          <form className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end" onSubmit={submitCategory}>
+            <Field label="Emri i kategorisë" className="min-w-0 flex-1">
+              <input
+                className="admin-input h-11 w-full rounded-xl border px-3"
+                maxLength={80}
+                minLength={2}
+                onChange={(event) => setCategoryName(event.target.value)}
+                placeholder="P.sh. Restorant"
+                required
+                value={categoryName}
+              />
+            </Field>
+            <button className="primary-button h-11 justify-center" disabled={savingCategory} type="submit">
+              <Plus className="h-4 w-4" />
+              {savingCategory ? "Duke ruajtur..." : "Ruaj kategorinë"}
+            </button>
+          </form>
+          <div className="mt-4 flex flex-wrap gap-2" aria-label="Kategoritë ekzistuese">
+            {categories.map((category) => (
+              <span className="admin-soft rounded-full border px-3 py-1.5 text-sm" key={category.id}>
+                {category.name}
+              </span>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {showForm ? (
         <section>
@@ -373,28 +400,6 @@ export default function BusinessesPage() {
                   value={form.password}
                 />
               </Field>
-              <Field label="Kategoria e biznesit">
-                <select
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
-                  onChange={(event) =>
-                    setForm({ ...form, category: event.target.value })
-                  }
-                  required
-                  value={form.category}
-                >
-                  {categories
-                    .filter((category) => category.active)
-                    .map((category) => (
-                      <option
-                        className="bg-[#101010]"
-                        key={category.id}
-                        value={category.name}
-                      >
-                        {category.name}
-                      </option>
-                    ))}
-                </select>
-              </Field>
               <Field label="Statusi i biznesit">
                 <select
                   className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
@@ -415,6 +420,20 @@ export default function BusinessesPage() {
                   ))}
                 </select>
               </Field>
+              <Field label="Kategoria e biznesit">
+                <select
+                  className="admin-input h-11 w-full rounded-xl border px-3"
+                  disabled={loadingCategories || !categories.length}
+                  onChange={(event) => setForm({ ...form, category: event.target.value })}
+                  required
+                  value={form.category}
+                >
+                  <option value="" disabled>{loadingCategories ? "Po ngarkohen kategoritë..." : "Zgjidh kategorinë"}</option>
+                  {categories.filter((category) => category.active || (editingId && category.name === form.category)).map((category) => (
+                    <option key={category.id} value={category.name}>{category.name}</option>
+                  ))}
+                </select>
+              </Field>
               <Field label="Adresa e biznesit">
                 <input
                   className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
@@ -426,25 +445,10 @@ export default function BusinessesPage() {
                   value={form.addressText}
                 />
               </Field>
-              <Field label="Latitude">
-                <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
-                  onChange={(event) =>
-                    setForm({ ...form, lat: event.target.value })
-                  }
-                  placeholder="41.3275"
-                  value={form.lat}
-                />
-              </Field>
-              <Field label="Longitude">
-                <input
-                  className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
-                  onChange={(event) =>
-                    setForm({ ...form, lng: event.target.value })
-                  }
-                  placeholder="19.8187"
-                  value={form.lng}
-                />
+              <Field label="Link Google Maps" className="col-span-full">
+                <input className="admin-input h-11 w-full rounded-xl border px-3" type="url" required
+                  placeholder="https://maps.app.goo.gl/..." value={form.googleMapsUrl}
+                  onChange={(event) => setForm({...form, googleMapsUrl:event.target.value})} />
               </Field>
               <Field label="Pershkrim i shkurter">
                 <textarea
@@ -481,7 +485,7 @@ export default function BusinessesPage() {
                 />
               ) : null}
               <button
-                className="type-cta flex h-11 items-center justify-center rounded-xl bg-happy-orange text-white happy-pill-shadow"
+                className="type-cta col-span-full flex h-11 w-full items-center justify-center rounded-xl bg-happy-orange text-white happy-pill-shadow"
                 disabled={saving}
                 type="submit"
               >
@@ -494,57 +498,6 @@ export default function BusinessesPage() {
               </button>
             </div>
           </form>
-        </section>
-      ) : null}
-
-      {showCategoryForm ? (
-        <section className="admin-panel rounded-3xl border p-4 shadow-happy md:p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-2xl bg-happy-orange/15 text-happy-orange">
-              <Tags className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="type-badge uppercase tracking-wide text-happy-orange">
-                Kategori
-              </p>
-              <h2 className="type-section-title">Shto kategori</h2>
-            </div>
-          </div>
-          <form className="mt-5 grid gap-3" onSubmit={submitCategory}>
-            <Field label="Emri i kategorise">
-              <input
-                className="admin-input h-11 w-full rounded-xl border px-3 outline-none focus:border-white/35"
-                onChange={(event) =>
-                  setCategoryForm({
-                    ...categoryForm,
-                    name: event.target.value,
-                  })
-                }
-                placeholder="P.sh. Farmaci, Lule"
-                value={categoryForm.name}
-              />
-            </Field>
-            <button
-              className="type-cta h-11 rounded-xl bg-happy-orange text-white happy-pill-shadow"
-              disabled={savingCategory}
-              type="submit"
-            >
-              {savingCategory ? "Duke shtuar..." : "Shto kategori"}
-            </button>
-          </form>
-          <div className="mt-5 space-y-2">
-            {categories.map((category) => (
-              <div
-                className="admin-soft flex items-center justify-between rounded-2xl border px-3 py-2"
-                key={category.id}
-              >
-                <span className="type-body">{category.name}</span>
-                <span className="type-badge text-white/42">
-                  {category.businessCount}
-                </span>
-              </div>
-            ))}
-          </div>
         </section>
       ) : null}
 
@@ -639,7 +592,7 @@ export default function BusinessesPage() {
                 src={business.coverImageUrl ?? "/happy-logo.svg"}
               />
               <div>
-                <h3 className="type-restaurant">{business.name}</h3>
+                <h3 className="type-restaurant"><Link href={`/businesses/${business.id}/orders`} className="hover:text-happy-orange">{business.name}</Link></h3>
                 <p className="type-secondary mt-1 text-white/52">
                   {business.addressText}
                 </p>
@@ -651,6 +604,7 @@ export default function BusinessesPage() {
                 </p>
               </div>
               <div className="flex flex-wrap items-start justify-start gap-2 md:justify-end">
+                <Link className="secondary-button" href={`/businesses/${business.id}/orders`}>Porositë</Link>
                 <button
                   aria-label={`Ndrysho ${business.name}`}
                   className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 text-white/70 hover:border-happy-orange/50 hover:text-happy-orange"

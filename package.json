@@ -14,18 +14,20 @@
   "scripts": {
     "predev": "npm run clean:next",
     "dev": "npm run dev:api & npm run dev:admin & npm run dev:business & npm run dev:rider & wait",
-    "clean:next": "rm -rf apps/admin-portal/.next apps/business-portal/.next apps/rider-app/.next apps/admin-portal/.next.stale-* apps/business-portal/.next.stale-* apps/rider-app/.next.stale-*",
+    "clean:next": "rimraf apps/admin-portal/.next apps/business-portal/.next apps/rider-app/.next",
     "dev:api": "npm run dev -w @happy-tirana/api",
     "dev:admin": "npm run dev -w @happy-tirana/admin-portal",
     "dev:business": "npm run dev -w @happy-tirana/business-portal",
     "dev:rider": "npm run dev -w @happy-tirana/rider-app",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
-    "db:migrate": "docker compose exec -T postgres psql -U happy -d happy_tirana -f /docker-entrypoint-initdb.d/001_initial_postgis.sql -f /docker-entrypoint-initdb.d/002_customer_ordering.sql -f /docker-entrypoint-initdb.d/003_customer_accounts_cart_seed.sql -f /docker-entrypoint-initdb.d/004_customer_catalog_addresses_routes.sql -f /docker-entrypoint-initdb.d/005_guest_carts.sql -f /docker-entrypoint-initdb.d/006_rider_dashboard_seed.sql -f /docker-entrypoint-initdb.d/007_admin_business_categories.sql -f /docker-entrypoint-initdb.d/008_admin_auth_seed.sql -f /docker-entrypoint-initdb.d/009_business_auth_seed.sql -f /docker-entrypoint-initdb.d/010_hide_sample_catalog.sql -f /docker-entrypoint-initdb.d/011_extra_dispatch_pricing_rules.sql -f /docker-entrypoint-initdb.d/012_expand_tirana_operational_zone.sql -f /docker-entrypoint-initdb.d/013_superadmin_role.sql",
+    "db:migrate": "docker compose run --rm api npm run migrate -w @happy-tirana/db",
     "db:create-admin": "npm run create-admin -w @happy-tirana/api",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test": "node --test tests/*.test.cjs",
+    "test:integration": "docker compose run --rm --no-deps api node --import tsx --test tests/operations.integration.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -33,6 +35,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "prettier": "^3.6.0",
+    "rimraf": "^6.1.3",
     "typescript": "^5.9.0"
   }
 }
