@@ -156,6 +156,10 @@ export async function getAdminBusinesses() {
   return apiFetch<{ businesses: AdminBusiness[] }>("/admin/businesses");
 }
 
+export async function deleteAdminBusiness(id: string) {
+  return apiFetch<{ ok: true }>(`/admin/businesses/${id}`, { method: "DELETE" });
+}
+
 export async function loginAdmin(input: { email: string; password: string }) {
   const data = await apiFetch<{ admin: AdminSession }>("/admin/auth/login", {
     method: "POST",
@@ -233,6 +237,10 @@ export async function createAdminBusinessCategory(input: {
 
 export async function getAdminRiders() {
   return apiFetch<{ riders: AdminRider[] }>("/admin/riders");
+}
+
+export async function deleteAdminRider(id: string) {
+  return apiFetch<{ ok: true }>(`/admin/riders/${id}`, { method: "DELETE" });
 }
 
 export async function createAdminRider(input: {

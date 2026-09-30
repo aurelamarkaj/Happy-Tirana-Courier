@@ -9,16 +9,20 @@ import {
   Save,
   Search,
   ShieldCheck,
+  Trash2,
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { AdminMetric, AdminShell } from "../../components/admin-shell";
+import { DeleteAccountConfirmation } from "../../components/delete-account-confirmation";
 import {
   createAdminRider,
+  deleteAdminRider,
   formatLek,
   getAdminRiders,
   setRiderAccountBalance,
   updateAdminRider,
+  ApiError,
   type AdminRider,
 } from "../../lib/api";
 
@@ -51,6 +55,8 @@ export default function RidersPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AdminRider | null>(null);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [fleetFilter, setFleetFilter] = useState("ALL");
@@ -153,6 +159,29 @@ export default function RidersPage() {
     });
     setShowForm(true);
     setMessage("");
+  }
+
+  async function removeRider(rider: AdminRider) {
+    setDeletingId(rider.id);
+    setMessage("");
+    try {
+      await deleteAdminRider(rider.id);
+      if (editingId === rider.id) {
+        setEditingId(null);
+        setForm(emptyForm);
+        setShowForm(false);
+      }
+      if (payoutRider?.id === rider.id) setPayoutRider(null);
+      await loadRiders();
+      setPendingDelete(null);
+      setMessage(`Motoristi “${rider.name}” u fshi.`);
+    } catch (error) {
+      setMessage(error instanceof ApiError && error.code === "RIDER_HAS_ACTIVE_ORDERS"
+        ? "Motoristi ka porosi aktive. Përfundoji para fshirjes."
+        : "Motoristi nuk u fshi. Provo përsëri.");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   async function recordPayout(event: FormEvent<HTMLFormElement>) {
@@ -352,6 +381,16 @@ export default function RidersPage() {
         </p>
       ) : null}
 
+      {pendingDelete ? (
+        <DeleteAccountConfirmation
+          busy={deletingId === pendingDelete.id}
+          kind="motoristin"
+          name={pendingDelete.name}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void removeRider(pendingDelete)}
+        />
+      ) : null}
+
       <section className="admin-panel rounded-3xl border p-5 shadow-happy">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="type-section-title">Flota</h2>
@@ -460,6 +499,15 @@ export default function RidersPage() {
                   type="button"
                 >
                   <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  aria-label={`Fshi ${rider.name}`}
+                  className="flex h-10 items-center justify-center gap-2 rounded-xl border border-red-300 px-3 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  disabled={deletingId === rider.id}
+                  onClick={() => setPendingDelete(rider)}
+                  type="button"
+                >
+                  <Trash2 className="h-4 w-4" /> Fshi
                 </button>
                 {rider.isDebitBlocked ? (
                   <span className="type-badge w-fit rounded-full bg-red-500/18 px-3 py-2 text-red-100">

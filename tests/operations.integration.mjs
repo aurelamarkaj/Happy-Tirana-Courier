@@ -33,7 +33,7 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
     }
     db=new pg.Client({connectionString:url.href});await db.connect();
     await t.test("fresh migrations and repeat run",async()=>{
-      assert.equal((await db.query("SELECT count(*)::int AS n FROM schema_migrations")).rows[0].n,17);
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM schema_migrations")).rows[0].n,18);
       const boundary=(await db.query(`SELECT ST_IsValid(z.polygon) AS valid,
         ST_NPoints(z.polygon) AS vertex_count,
         ST_Covers(z.polygon, ST_SetSRID(ST_MakePoint(19.7779923,41.3391526),4326)) AS mezez_inside,
@@ -335,6 +335,54 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
       assert.match(readFileSync("apps/rider-app/components/rider-contact-line.tsx","utf8"),/href=\{`tel:/);
       assert.doesNotMatch(readFileSync("apps/rider-app/app/delivery/page.tsx","utf8"),/Anulo per problem/);
       assert.equal((await request(`/riders/orders/${first}/status`,{riderId:winner,status:"CANCELLED"},"PATCH")).status,422);
+    });
+    await t.test("admin removes businesses without losing order history or reusing an active session",async()=>{
+      const input={name:"Business to remove",phone:"+355699990001",email:"remove-business@example.invalid",
+        password, addressText:"Test address",googleMapsUrl:payload.googleMapsUrl,status:"ACTIVE",etaMinutes:25};
+      const created=await request("/admin/businesses",input);
+      assert.equal(created.status,201,JSON.stringify(created));
+      const id=created.body.business.id;
+      const login=await request("/businesses/auth/login",{email:input.email,password});
+      assert.equal(login.status,200);
+      const orderId=await create({},id);
+      assert.equal((await request(`/admin/businesses/${id}`,undefined,"DELETE",null)).status,401);
+      assert.equal((await request(`/admin/businesses/${id}`,undefined,"DELETE")).body.error,"BUSINESS_HAS_ACTIVE_ORDERS");
+      assert.equal((await db.query("SELECT deleted_at FROM businesses WHERE id=$1",[id])).rows[0].deleted_at,null);
+      assert.equal((await request(`/admin/orders/${orderId}/cancel`,{},"PATCH")).status,200);
+      assert.equal((await request(`/admin/businesses/${id}`,undefined,"DELETE")).status,200);
+      assert.ok((await db.query("SELECT id FROM orders WHERE id=$1 AND business_id=$2",[orderId,id])).rowCount);
+      assert.ok((await db.query("SELECT deleted_at FROM businesses WHERE id=$1",[id])).rows[0].deleted_at);
+      assert.ok(!(await request("/admin/businesses",undefined,"GET")).body.businesses.some(b=>b.id===id));
+      assert.equal((await request(`/businesses/${id}/dashboard`,undefined,"GET",login.body.business.token)).status,401);
+      assert.equal((await request("/businesses/auth/login",{email:input.email,password})).status,401);
+      assert.equal((await request(`/admin/businesses/${id}`,undefined,"DELETE")).status,404);
+      assert.equal((await request("/admin/businesses",input)).status,201,"deleted account contact must be reusable");
+    });
+    await t.test("admin removes riders, closes offers and retains delivered-order finance",async()=>{
+      const input={name:"Rider to remove",phone:"+355699990002",email:"remove-rider@example.invalid",
+        password,vehicleType:"ELECTRIC",status:"ACTIVE"};
+      const created=await request("/admin/riders",input);
+      assert.equal(created.status,201,JSON.stringify(created));
+      const id=created.body.rider.id;
+      const login=await request("/riders/auth/login",{email:input.email,password});
+      assert.equal(login.status,200);
+      const historicOrder=await create();
+      await db.query("UPDATE orders SET status='ACCEPTED',assigned_rider_id=$2 WHERE id=$1",[historicOrder,id]);
+      assert.equal((await request(`/admin/riders/${id}`,undefined,"DELETE",null)).status,401);
+      assert.equal((await request(`/admin/riders/${id}`,undefined,"DELETE")).body.error,"RIDER_HAS_ACTIVE_ORDERS");
+      await db.query("UPDATE orders SET status='DELIVERED' WHERE id=$1",[historicOrder]);
+      await db.query("INSERT INTO ledger_entries(rider_id,order_id,entry_type,amount,direction) VALUES($1,$2,'TEST',10,'RIDER_EARNS')",[id,historicOrder]);
+      const offeredOrder=await create();
+      await offer(offeredOrder,id);
+      assert.equal((await request(`/admin/riders/${id}`,undefined,"DELETE")).status,200);
+      assert.equal((await db.query("SELECT status FROM order_offers WHERE order_id=$1 AND rider_id=$2",[offeredOrder,id])).rows[0].status,"CANCELLED");
+      assert.ok((await db.query("SELECT id FROM ledger_entries WHERE rider_id=$1 AND order_id=$2",[id,historicOrder])).rowCount);
+      assert.ok((await db.query("SELECT deleted_at FROM rider_profiles WHERE id=$1",[id])).rows[0].deleted_at);
+      assert.ok(!(await request("/admin/riders",undefined,"GET")).body.riders.some(r=>r.id===id));
+      assert.equal((await request(`/riders/${id}/dashboard`,undefined,"GET",login.body.rider.token)).status,401);
+      assert.equal((await request("/riders/auth/login",{email:input.email,password})).status,401);
+      assert.equal((await request(`/admin/riders/${id}`,undefined,"DELETE")).status,404);
+      assert.equal((await request("/admin/riders",input)).status,201,"deleted rider contact must be reusable");
     });
   } finally {
     globalThis.fetch=realFetch;globalThis.Date=RealDate;

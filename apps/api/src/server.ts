@@ -1412,7 +1412,7 @@ app.get("/admin/businesses", async (_req, res, next) => {
        FROM businesses b
        LEFT JOIN orders o ON o.business_id = b.id
        LEFT JOIN products p ON p.business_id = b.id AND p.is_available = true
-       WHERE b.id <> ALL($1::uuid[])
+       WHERE b.id <> ALL($1::uuid[]) AND b.deleted_at IS NULL
        GROUP BY b.id
        ORDER BY b.created_at DESC`,
       [sampleBusinessIds],
@@ -1433,7 +1433,7 @@ app.get("/admin/business-categories", async (_req, res, next) => {
               bc.sort_order,
               COUNT(b.id)::int AS business_count
        FROM business_categories bc
-       LEFT JOIN businesses b ON b.category = bc.name AND b.id <> ALL($1::uuid[])
+       LEFT JOIN businesses b ON b.category = bc.name AND b.id <> ALL($1::uuid[]) AND b.deleted_at IS NULL
        GROUP BY bc.id
        ORDER BY bc.sort_order, bc.name`,
       [sampleBusinessIds],
@@ -1466,7 +1466,7 @@ app.post("/admin/business-categories", async (req, res, next) => {
                  name,
                  active,
                  sort_order,
-                 (SELECT COUNT(*)::int FROM businesses b WHERE b.category = business_categories.name) AS business_count`,
+                 (SELECT COUNT(*)::int FROM businesses b WHERE b.category = business_categories.name AND b.deleted_at IS NULL) AS business_count`,
       [body.name.trim(), body.active ?? true, body.sortOrder ?? 50],
     );
 
@@ -1636,7 +1636,7 @@ app.patch("/admin/businesses/:id", async (req, res, next) => {
       `UPDATE businesses SET name=$2, legal_name=NULLIF($3,''), phone=$4,
        email=NULLIF($5,''), address_text=$6, lat=$7, lng=$8, status=$9,
        category=$10, eta_minutes=$11, cover_image_url=NULLIF($12,''), description=NULLIF($13,'')
-       WHERE id=$1 RETURNING id`,
+       WHERE id=$1 AND deleted_at IS NULL RETURNING id`,
       [
         id,
         body.name.trim(),
@@ -1682,6 +1682,49 @@ app.patch("/admin/businesses/:id", async (req, res, next) => {
   }
 });
 
+app.delete("/admin/businesses/:id", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await client.query("BEGIN");
+    const business = await client.query(
+      "SELECT id FROM businesses WHERE id=$1 AND deleted_at IS NULL FOR UPDATE", [id],
+    );
+    if (!business.rowCount) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "BUSINESS_NOT_FOUND" });
+      return;
+    }
+    const active = await client.query(
+      "SELECT 1 FROM orders WHERE business_id=$1 AND status IN ('CREATED','OFFERED','ACCEPTED','PICKED_UP') LIMIT 1", [id],
+    );
+    if (active.rowCount) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "BUSINESS_HAS_ACTIVE_ORDERS" });
+      return;
+    }
+    await client.query(
+      "UPDATE businesses SET status='INACTIVE', deleted_at=now(), updated_at=now() WHERE id=$1", [id],
+    );
+    // A business can have several users; only retire users with no other active business.
+    await client.query(`UPDATE users u SET status='INACTIVE', email='deleted-' || u.id::text || '@accounts.invalid',
+      phone=NULL, updated_at=now()
+      FROM business_users bu WHERE bu.business_id=$1 AND bu.user_id=u.id
+        AND NOT EXISTS (SELECT 1 FROM business_users other_link JOIN businesses other_business
+          ON other_business.id=other_link.business_id WHERE other_link.user_id=u.id
+          AND other_business.id<>$1 AND other_business.deleted_at IS NULL)`, [id]);
+    await client.query("COMMIT");
+    io.in(`business:${id}`).disconnectSockets(true);
+    io.to("admin").emit("business.deleted", { businessId: id });
+    res.json({ ok: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 app.get("/admin/riders", async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
@@ -1718,6 +1761,7 @@ app.get("/admin/riders", async (_req, res, next) => {
            AND le.status = 'OPEN'
        ) debt ON true
        LEFT JOIN orders o ON o.assigned_rider_id = rp.id
+       WHERE rp.deleted_at IS NULL
        GROUP BY rp.id, u.id, latest.lat, latest.lng, debt.platform_due
        ORDER BY rp.created_at DESC`,
     );
@@ -1825,7 +1869,7 @@ app.patch("/admin/riders/:id", async (req, res, next) => {
       `UPDATE rider_profiles rp SET vehicle_type=$2, license_number=NULLIF($3,''), personal_id=NULLIF($5,''),
        status=$4::rider_status,
        is_online=CASE WHEN $4::rider_status <> 'ACTIVE'::rider_status THEN false ELSE rp.is_online END
-       WHERE rp.id=$1 RETURNING rp.user_id`,
+       WHERE rp.id=$1 AND rp.deleted_at IS NULL RETURNING rp.user_id`,
       [id, body.vehicleType, body.licenseNumber ?? "", body.status, body.personalId ?? ""],
     );
     if (!updated.rows[0]) {
@@ -1862,13 +1906,56 @@ app.patch("/admin/riders/:id", async (req, res, next) => {
   }
 });
 
+app.delete("/admin/riders/:id", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await client.query("BEGIN");
+    const rider = await client.query(
+      "SELECT id, user_id FROM rider_profiles WHERE id=$1 AND deleted_at IS NULL FOR UPDATE", [id],
+    );
+    if (!rider.rowCount) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "RIDER_NOT_FOUND" });
+      return;
+    }
+    const active = await client.query(
+      "SELECT 1 FROM orders WHERE assigned_rider_id=$1 AND status IN ('ACCEPTED','PICKED_UP') LIMIT 1", [id],
+    );
+    if (active.rowCount) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "RIDER_HAS_ACTIVE_ORDERS" });
+      return;
+    }
+    await client.query(`UPDATE rider_profiles SET status='INACTIVE', is_online=false,
+      deleted_at=now(), updated_at=now() WHERE id=$1`, [id]);
+    await client.query(`UPDATE users SET status='INACTIVE',
+      email='deleted-' || id::text || '@accounts.invalid', phone=NULL, updated_at=now()
+      WHERE id=$1`, [rider.rows[0].user_id]);
+    await client.query(
+      "UPDATE order_offers SET status='CANCELLED', responded_at=now() WHERE rider_id=$1 AND status='PENDING'", [id],
+    );
+    await client.query(`UPDATE notifications SET status='CLOSED' WHERE user_id=$1
+      AND type LIKE 'ORDER_OFFERED_%' AND status IN ('PENDING','SENT')`, [rider.rows[0].user_id]);
+    await client.query("COMMIT");
+    io.in(`rider:${id}`).disconnectSockets(true);
+    io.to("admin").emit("rider.deleted", { riderId: id });
+    res.json({ ok: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 app.patch("/admin/riders/:id/account-balance",requireAdmin,async(req,res,next)=>{
  const client=await pool.connect();
  try {
   const {id}=z.object({id:z.string().uuid()}).parse(req.params);
   const {balance}=z.object({balance:z.number().finite().min(0).max(5000).multipleOf(0.01)}).parse(req.body);
   await client.query("BEGIN");
-  const locked=await client.query("SELECT account_balance_all FROM rider_profiles WHERE id=$1 FOR UPDATE",[id]);
+  const locked=await client.query("SELECT account_balance_all FROM rider_profiles WHERE id=$1 AND deleted_at IS NULL FOR UPDATE",[id]);
   if(!locked.rowCount){await client.query("ROLLBACK");res.status(404).json({error:"RIDER_NOT_FOUND"});return;}
   const current=Number(locked.rows[0].account_balance_all);
   if(balance>current){await client.query("ROLLBACK");res.status(409).json({error:"BALANCE_CAN_ONLY_DECREASE_AT_PAYOUT"});return;}

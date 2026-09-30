@@ -14,7 +14,6 @@ import {
   hasGoogleMapsKey,
   loadGoogleMaps,
 } from "../lib/google-maps";
-import { OpenStreetAdminMap } from "./openstreet-map";
 
 const defaultCenter = { lat: 41.3275, lng: 19.8187 };
 
@@ -167,11 +166,9 @@ export function ZoneBuilderMap({
     <div className="relative min-h-[360px] overflow-hidden rounded-2xl border border-white/10 bg-[#171717] sm:min-h-[528px]">
       <div className="absolute inset-0" ref={mapElementRef} />
       {loadError || !hasGoogleMapsKey() ? (
-        <OpenStreetAdminMap
-          points={points}
-          zones={zones}
-          onPointsChange={readOnly ? undefined : onPointsChange}
-        />
+        <div className="absolute inset-0 flex items-center justify-center bg-white p-6 text-center text-slate-700">
+          Harta Google Maps nuk u ngarkua. Kontrollo çelësin dhe lejet e Google Maps API.
+        </div>
       ) : null}
       <div className="absolute left-4 top-4 z-[500] rounded-2xl bg-[#101010]/90 px-4 py-3 text-white shadow-happy backdrop-blur">
         <p className="type-badge flex items-center uppercase tracking-wide text-white/55">
@@ -308,17 +305,13 @@ export function AdminLiveMap({
     <div className="relative min-h-[360px] overflow-hidden rounded-2xl border border-white/10 bg-[#171717] sm:min-h-[528px]">
       <div className="absolute inset-0" ref={mapElementRef} />
       {loadError || !hasGoogleMapsKey() ? (
-        <OpenStreetAdminMap
-          riders={riders}
-          orders={orders}
-          routePaths={routePaths}
-        />
+        <div className="absolute inset-0 flex items-center justify-center bg-white p-6 text-center text-slate-700">
+          Harta Google Maps nuk u ngarkua. Kontrollo çelësin dhe lejet e Google Maps API.
+        </div>
       ) : null}
       <div className="absolute left-4 top-4 z-[500] rounded-2xl bg-[#101010]/90 px-4 py-3 text-white shadow-happy backdrop-blur">
         <p className="type-badge uppercase tracking-wide text-white/55">
-          {loadError || !hasGoogleMapsKey()
-            ? "OpenStreetMap live"
-            : "Google live map"}
+          Google Maps live
         </p>
         <p className="type-secondary mt-1 text-white/70">
           {riders.length} motoriste · {orders.length} porosi aktive

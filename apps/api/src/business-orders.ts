@@ -66,7 +66,7 @@ export async function calculateBusinessTransportQuote(
   },
 ) {
   const business = await client.query(
-    "SELECT id, lat, lng FROM businesses WHERE id = $1 AND status = 'ACTIVE'",
+    "SELECT id, lat, lng FROM businesses WHERE id = $1 AND status = 'ACTIVE' AND deleted_at IS NULL FOR SHARE",
     [input.businessId],
   );
   const origin = business.rows[0];

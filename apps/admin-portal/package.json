@@ -13,7 +13,6 @@
     "@fontsource/manrope": "^5.3.0",
     "@happy-tirana/shared-types": "0.1.0",
     "@react-google-maps/api": "^2.20.0",
-    "leaflet": "^1.9.4",
     "lucide-react": "^0.541.0",
     "next": "^15.5.0",
     "react": "^19.1.0",
@@ -21,7 +20,6 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
-    "@types/leaflet": "^1.9.22",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",

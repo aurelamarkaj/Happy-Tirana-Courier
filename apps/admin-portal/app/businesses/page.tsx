@@ -12,6 +12,7 @@ import {
   Search,
   Store,
   Tags,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -24,12 +25,15 @@ import {
 } from "react";
 import Link from "next/link";
 import { AdminMetric, AdminShell } from "../../components/admin-shell";
+import { DeleteAccountConfirmation } from "../../components/delete-account-confirmation";
 import {
   createAdminBusiness,
   createAdminBusinessCategory,
+  deleteAdminBusiness,
   getAdminBusinessCategories,
   getAdminBusinesses,
   updateAdminBusiness,
+  ApiError,
   type AdminBusiness,
   type AdminBusinessCategory,
 } from "../../lib/api";
@@ -66,6 +70,8 @@ export default function BusinessesPage() {
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingCategory, setSavingCategory] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AdminBusiness | null>(null);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -212,6 +218,29 @@ export default function BusinessesPage() {
     });
     setShowForm(true);
     setMessage("");
+  }
+
+  async function removeBusiness(business: AdminBusiness) {
+    setDeletingId(business.id);
+    setMessage("");
+    try {
+      await deleteAdminBusiness(business.id);
+      if (editingId === business.id) {
+        setEditingId(null);
+        setForm(emptyForm);
+        setShowForm(false);
+      }
+      await loadBusinesses();
+      await loadCategories();
+      setPendingDelete(null);
+      setMessage(`Biznesi “${business.name}” u fshi.`);
+    } catch (error) {
+      setMessage(error instanceof ApiError && error.code === "BUSINESS_HAS_ACTIVE_ORDERS"
+        ? "Biznesi ka porosi aktive. Mbylli ose anuloji nga faqja e porosive para fshirjes."
+        : "Biznesi nuk u fshi. Provo përsëri.");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   function handleCoverUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -507,6 +536,16 @@ export default function BusinessesPage() {
         </p>
       ) : null}
 
+      {pendingDelete ? (
+        <DeleteAccountConfirmation
+          busy={deletingId === pendingDelete.id}
+          kind="biznesin"
+          name={pendingDelete.name}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void removeBusiness(pendingDelete)}
+        />
+      ) : null}
+
       <section className="admin-panel rounded-3xl border p-5 shadow-happy">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -613,6 +652,15 @@ export default function BusinessesPage() {
                   type="button"
                 >
                   <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  aria-label={`Fshi ${business.name}`}
+                  className="flex h-10 items-center justify-center gap-2 rounded-xl border border-red-300 px-3 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  disabled={deletingId === business.id}
+                  onClick={() => setPendingDelete(business)}
+                  type="button"
+                >
+                  <Trash2 className="h-4 w-4" /> Fshi
                 </button>
                 <span className="type-badge h-fit rounded-full bg-white/10 px-3 py-2 text-white/62">
                   {business.category ?? "Te tjera"}
