@@ -269,8 +269,9 @@ export function AdminLiveMap({
         "HTC",
         rider.isOnline ? "admin-map-rider-online" : "admin-map-rider",
       );
+      if (rider.gpsAccuracy != null) overlaysRef.current.push(new window.google.maps.Circle({map:mapRef.current,center:position,radius:rider.gpsAccuracy,strokeColor:"#2463eb",strokeWeight:1,fillColor:"#2463eb",fillOpacity:0.1}));
       const info = new window.google.maps.InfoWindow({
-        content: `<strong>${rider.name}</strong><br/>${rider.isOnline ? "Online" : "Offline"}`,
+        content: `<strong>${rider.name}</strong><br/>${rider.isOnline ? "Online" : "Offline"}${rider.gpsAccuracy != null ? `<br/>Saktësia GPS: ±${Math.round(rider.gpsAccuracy)} m` : ""}`,
       });
       marker.addListener("click", () => info.open({ anchor: marker, map: mapRef.current }));
       overlaysRef.current.push(marker);

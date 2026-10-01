@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
   getRiderItinerary,
-  sendRiderLocation,
   type RiderOrder,
   type RiderItinerary,
   type RoutePoint,
 } from "../lib/api";
 import { createHappyMarker, loadGoogleMaps } from "../lib/google-maps";
+
+import { useRiderGps } from "./rider-gps";
+import { riderNavigationUrl } from "../lib/navigation";
 
 const defaultCenter = { lat: 41.3275, lng: 19.8187 };
 export function RiderMap({
@@ -30,20 +32,15 @@ export function RiderMap({
   const lastRoute = useRef<{ point: RoutePoint; time: number } | null>(null);
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState(false);
-  const [location, setLocation] = useState<RoutePoint | null>(null);
+  const {location, message:gpsMessage} = useRiderGps();
   const [origin, setOrigin] = useState<RoutePoint | null>(null);
   const [itinerary, setItinerary] = useState<RiderItinerary | null>(null);
   const [routeError, setRouteError] = useState("");
-  const [gpsMessage, setGpsMessage] = useState(
-    "Lejo vendndodhjen për navigim nga pozicioni yt.",
-  );
   const [routing, setRouting] = useState(false);
-  const canTrack = isOnline || orders.length > 0;
   const signature = orders
     .map((o) => o.id + ":" + o.status)
     .sort()
     .join("|");
-  const activeId = orders[0]?.id ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -69,54 +66,12 @@ export function RiderMap({
   }, []);
 
   useEffect(() => {
-    if (!canTrack) {
-      setLocation(null);
-      setOrigin(null);
-      lastRoute.current = null;
-      setGpsMessage("Aktivizo online për vendndodhjen live.");
-      return;
+    if(!location){setOrigin(null);lastRoute.current=null;return;}
+    const now=Date.now(),previous=lastRoute.current;
+    if(!previous || (now-previous.time>30000 && Math.hypot(location.lat-previous.point.lat,location.lng-previous.point.lng)>0.0005)){
+      lastRoute.current={point:location,time:now};setOrigin(location);
     }
-    if (!navigator.geolocation) {
-      setGpsMessage("Ky shfletues nuk ofron vendndodhjen.");
-      return;
-    }
-    let lastSent = 0;
-    const watch = navigator.geolocation.watchPosition(
-      (pos) => {
-        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setLocation(p);
-        setGpsMessage("GPS live aktiv.");
-        const now = Date.now();
-        if (now - lastSent > 10000) {
-          lastSent = now;
-          void sendRiderLocation({
-            ...p,
-            orderId: activeId,
-            speed: pos.coords.speed ?? undefined,
-            heading: pos.coords.heading ?? undefined,
-          }).catch(() =>
-            setGpsMessage("Vendndodhja u gjet, por nuk u dërgua. Kontrollo lidhjen me internetin."),
-          );
-        }
-        const previous = lastRoute.current;
-        if (
-          !previous ||
-          (now - previous.time > 30000 &&
-            Math.hypot(p.lat - previous.point.lat, p.lng - previous.point.lng) >
-              0.0005)
-        ) {
-          lastRoute.current = { point: p, time: now };
-          setOrigin(p);
-        }
-      },
-      () =>
-        setGpsMessage(
-          "Lejo vendndodhjen në shfletues për itinerarin nga pozicioni yt.",
-        ),
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
-    );
-    return () => navigator.geolocation.clearWatch(watch);
-  }, [canTrack, activeId]);
+  },[location]);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,7 +86,7 @@ export function RiderMap({
       .then((result) => {
         if (cancelled) return;
         setItinerary(result);
-        if (result.stops[0]) onSelectOrder(result.stops[0].orderId);
+
       })
       .catch(() => {
         if (!cancelled)
@@ -199,24 +154,7 @@ export function RiderMap({
     };
   }, [ready, location, itinerary, signature]);
 
-  const next = itinerary?.stops[0];
-  const destination =
-    next ??
-    (order && order.status !== "OFFERED"
-      ? leg === "pickup"
-        ? { lat: order.pickupLat, lng: order.pickupLng }
-        : { lat: order.dropoffLat, lng: order.dropoffLng }
-      : null);
-  const navigation = destination
-    ? "https://www.google.com/maps/dir/?" +
-      new URLSearchParams({
-        api: "1",
-        destination: `${destination.lat},${destination.lng}`,
-        travelmode: "driving",
-        dir_action: "navigate",
-        ...(location ? { origin: `${location.lat},${location.lng}` } : {}),
-      }).toString()
-    : null;
+  const navigation = riderNavigationUrl(order, location);
 
   return (
     <section className="rider-panel overflow-hidden rounded-xl border">
@@ -263,9 +201,7 @@ export function RiderMap({
             rel="noreferrer"
           >
             Nis navigimin
-            {next
-              ? ` · ${next.kind === "pickup" ? "Marrje" : "Dorëzim"} ${next.code}`
-              : ""}
+            {order?.status === "PICKED_UP" ? " · Biznesi → Klienti" : " · Ti → Biznesi"}
           </a>
         )}
         {!orders.length && (

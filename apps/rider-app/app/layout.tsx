@@ -8,6 +8,9 @@ import "@fontsource/manrope/800.css";
 import "./globals.css";
 import "../../shared/operations.css";
 import "../../shared/forms.css";
+import { RiderLiveNotifications } from "../components/rider-live-notifications";
+
+import { RiderGpsProvider } from "../components/rider-gps";
 
 export const metadata: Metadata = {
   title: "Happy Tirana Courier Rider",
@@ -25,7 +28,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="sq">
       <body className="font-sans" suppressHydrationWarning>
-        {children}
+        <RiderGpsProvider>{children}</RiderGpsProvider>
+        <RiderLiveNotifications />
       </body>
     </html>
   );

@@ -33,7 +33,7 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
     }
     db=new pg.Client({connectionString:url.href});await db.connect();
     await t.test("fresh migrations and repeat run",async()=>{
-      assert.equal((await db.query("SELECT count(*)::int AS n FROM schema_migrations")).rows[0].n,18);
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM schema_migrations")).rows[0].n,21);
       const boundary=(await db.query(`SELECT ST_IsValid(z.polygon) AS valid,
         ST_NPoints(z.polygon) AS vertex_count,
         ST_Covers(z.polygon, ST_SetSRID(ST_MakePoint(19.7779923,41.3391526),4326)) AS mezez_inside,
@@ -57,6 +57,7 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
     };
     globalThis.fetch=async(input,options)=>{
       const target=String(input);
+      if(target.startsWith("https://maps.googleapis.com/maps/api/geocode/")) return Response.json({status:"ZERO_RESULTS",results:[]});
       if(target.startsWith("https://routes.googleapis.com/")) {
         const body=JSON.parse(options.body);
         assert.equal(body.travelMode,"DRIVE");assert.equal(body.routingPreference,"TRAFFIC_UNAWARE");
@@ -86,6 +87,12 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
       const text=await r.text();let bodyResult;try{bodyResult=JSON.parse(text);}catch{bodyResult={text};}
       return {status:r.status,body:bodyResult};
     };
+    await t.test("reverse geocoding never substitutes a cached street when Google has no result",async()=>{
+      await db.query("INSERT INTO address_suggestions(label,city,details,lat,lng) VALUES('Wrong cached street','Tirane','Unrelated road',41.34,19.83)");
+      const r=await request("/public/addresses/reverse?lat=41.33&lng=19.82",undefined,"GET");
+      assert.equal(r.status,200);assert.equal(r.body.address,null);
+      assert.equal((await request("/public/addresses/reverse?lat=999&lng=19.82",undefined,"GET")).status,422);
+    });
     // Synthetic polygons exist only in this isolated test database.
     await db.query("UPDATE zones SET active=false");
     await db.query(`INSERT INTO zones(name,transport_fee,polygon,is_surcharge_area) VALUES
@@ -106,10 +113,22 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
     const riders=[];
     for(let i=0;i<5;i++) {
       const user=(await db.query("INSERT INTO users(name,email,password_hash,role) VALUES($1,$2,$3,'RIDER') RETURNING id",[`R${i}`,`r${i}@example.invalid`,passwordHash])).rows[0].id;
-      const id=(await db.query("INSERT INTO rider_profiles(user_id,is_online,vehicle_type) VALUES($1,true,$2) RETURNING id",[user,i===2?"DIESEL":"ELECTRIC"])).rows[0].id;
+      const id=(await db.query("INSERT INTO rider_profiles(user_id,is_online,vehicle_type) VALUES($1,true,$2) RETURNING id",[user,"DIESEL"])).rows[0].id;
       await db.query("INSERT INTO rider_locations(rider_id,lat,lng,point) VALUES($1,41.33,$2::numeric,ST_SetSRID(ST_MakePoint($2::double precision,41.33),4326))",[id,19.82+i*0.001]);
       riders.push(id);
     }
+    await t.test("rider GPS reaches database and admin map with its reported accuracy",async()=>{
+      for(const accuracy of [25,1500]){
+        const result=await request("/riders/me/location",{riderId:riders[0],lat:41.33,lng:19.82,accuracy});
+        assert.equal(result.status,201,JSON.stringify(result));
+        const map=await request("/admin/live-map",undefined,"GET");
+        assert.equal(map.status,200,JSON.stringify(map));
+        const rider=map.body.riders.find(r=>r.id===riders[0]);
+        assert.equal(rider.lastLat,41.33);assert.equal(rider.lastLng,19.82);
+        assert.equal(rider.gpsAccuracy,accuracy);assert.ok(rider.gpsRecordedAt);
+      }
+      assert.equal((await request("/riders/me/location",{riderId:riders[0],lat:999,lng:19.82,accuracy:20})).status,422);
+    });
     const payload={orderValue:1000,customerPhone:"+355691234567",googleMapsUrl:"https://maps.app.goo.gl/test-pin",readyMinutes:10};
     await t.test("admin, business and rider APIs require matching signed sessions",async()=>{
       for(const path of ["/admin/businesses","/admin/riders","/admin/finance","/admin/notifications","/admin/orders"])
@@ -146,9 +165,62 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
         assert.equal((await request(method==="POST"?"/admin/zones":`/admin/zones/${id}`,{},method)).status,405);
       }
     });
+    await t.test("new accounts require login email; edit and password reset permit login",async()=>{
+      const businessInput={name:"Auth business",phone:"+355699998881",email:"AUTH-BUSINESS@example.invalid",password,
+        addressText:"Test address",googleMapsUrl:payload.googleMapsUrl,status:"ACTIVE",etaMinutes:25};
+      assert.equal((await request("/admin/businesses",{...businessInput,email:""})).status,422);
+      const createdBusiness=await request("/admin/businesses",businessInput);
+      assert.equal(createdBusiness.status,201,JSON.stringify(createdBusiness));
+      const businessId=createdBusiness.body.business.id;
+      assert.equal((await request("/businesses/auth/login",{email:"auth-business@EXAMPLE.invalid",password})).status,200);
+      const changedBusiness={...businessInput,email:"changed-business@example.invalid"};
+      assert.equal((await request(`/admin/businesses/${businessId}`,changedBusiness,"PATCH")).status,200);
+      assert.equal((await request("/businesses/auth/login",{email:businessInput.email,password})).status,401);
+      assert.equal((await request("/businesses/auth/login",{email:changedBusiness.email,password})).status,200);
+      const newPassword="new-test-password-business";
+      assert.equal((await request(`/admin/businesses/${businessId}/password`,{password:newPassword},"PATCH",null)).status,401);
+      assert.equal((await request(`/admin/businesses/${businessId}/password`,{password:newPassword},"PATCH")).status,200);
+      assert.equal((await request("/businesses/auth/login",{email:changedBusiness.email,password})).status,401);
+      assert.equal((await request("/businesses/auth/login",{email:changedBusiness.email,password:newPassword})).status,200);
+      for(const status of ["INACTIVE","SUSPENDED"]){
+        assert.equal((await request(`/admin/businesses/${businessId}`,{...changedBusiness,status},"PATCH")).status,200);
+        const blocked=await request("/businesses/auth/login",{email:changedBusiness.email,password:newPassword});
+        assert.equal(blocked.status,403);assert.equal(blocked.body.error,`BUSINESS_${status}`);
+        assert.equal((await request("/businesses/auth/login",{email:changedBusiness.email,password:"wrong-password"})).status,401);
+      }
+      assert.equal((await request(`/admin/businesses/${businessId}`,changedBusiness,"PATCH")).status,200);
+      assert.equal((await request("/businesses/auth/login",{email:changedBusiness.email,password:newPassword})).status,200);
+      const riderInput={name:"Auth rider",phone:"+355699998882",email:"AUTH-RIDER@example.invalid",password,
+        vehicleType:"ELECTRIC",licenseNumber:"",personalId:"",status:"INACTIVE"};
+      assert.equal((await request("/admin/riders",{...riderInput,email:""})).status,422);
+      const createdRider=await request("/admin/riders",riderInput);
+      assert.equal(createdRider.status,201,JSON.stringify(createdRider));
+      const riderId=createdRider.body.rider.id;
+      const inactiveRider=await request("/riders/auth/login",{email:riderInput.email,password});
+      assert.equal(inactiveRider.status,403);assert.equal(inactiveRider.body.error,"RIDER_INACTIVE");
+      assert.equal((await db.query("SELECT u.status AS user_status,rp.status AS rider_status FROM rider_profiles rp JOIN users u ON u.id=rp.user_id WHERE rp.id=$1",[riderId])).rows[0].user_status,"INACTIVE");
+      const activeRider={...riderInput,email:"changed-rider@example.invalid",status:"ACTIVE"};
+      assert.equal((await request(`/admin/riders/${riderId}`,activeRider,"PATCH")).status,200);
+      assert.equal((await request("/riders/auth/login",{email:riderInput.email,password})).status,401);
+      assert.equal((await request("/riders/auth/login",{email:"CHANGED-RIDER@example.invalid",password})).status,200);
+      const riderPassword="new-test-password-rider";
+      assert.equal((await request(`/admin/riders/${riderId}/password`,{password:riderPassword},"PATCH")).status,200);
+      assert.equal((await request("/riders/auth/login",{email:activeRider.email,password})).status,401);
+      assert.equal((await request("/riders/auth/login",{email:activeRider.email,password:riderPassword})).status,200);
+      assert.equal((await request(`/admin/riders/${riderId}`,{...activeRider,status:"SUSPENDED"},"PATCH")).status,200);
+      const suspendedRider=await request("/riders/auth/login",{email:activeRider.email,password:riderPassword});
+      assert.equal(suspendedRider.status,403);assert.equal(suspendedRider.body.error,"RIDER_SUSPENDED");
+      assert.equal((await request("/riders/auth/login",{email:activeRider.email,password:"wrong-password"})).status,401);
+      assert.equal((await request(`/admin/riders/${riderId}`,activeRider,"PATCH")).status,200);
+      assert.equal((await request("/riders/auth/login",{email:activeRider.email,password:riderPassword})).status,200);
+    });
     const create=async(extra={},sourceBusiness=business)=>{
       const r=await request(`/businesses/${sourceBusiness}/orders`,{...payload,...extra});
-      assert.equal(r.status,201,JSON.stringify(r));return r.body.order.id;
+      assert.equal(r.status,201,JSON.stringify(r));
+      const scheduled=(await db.query("SELECT EXTRACT(EPOCH FROM (offer_after-created_at)) AS seconds FROM orders WHERE id=$1",[r.body.order.id])).rows[0];
+      assert.ok(Math.abs(Number(scheduled.seconds)-480)<3,"new orders must wait eight minutes");
+      await db.query("UPDATE orders SET offer_after=now()+interval '1 hour' WHERE id=$1",[r.body.order.id]);
+      return r.body.order.id;
     };
     const dispatch=async()=>{
       const c=await api.pool.connect();
@@ -161,6 +233,58 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
       await db.query("UPDATE orders SET status='OFFERED' WHERE id=$1",[order]);
       await db.query("INSERT INTO order_offers(order_id,rider_id,expires_at) VALUES($1,$2,now()+interval '10 minutes') ON CONFLICT(order_id,rider_id) DO UPDATE SET status='PENDING',expires_at=EXCLUDED.expires_at",[order,rider]);
     };
+    await t.test("eight-minute wait and 3000/3001m vehicle boundary across dispatch, dashboard, acceptance and admin",async()=>{
+      await db.query("UPDATE rider_profiles SET vehicle_type='ELECTRIC' WHERE id=$1",[riders[0]]);
+      for(const meters of [3000,3001]){
+        roadDistance=meters;
+        const id=await create({readyMinutes:20});
+        await db.query("UPDATE orders SET offer_after=now()+interval '1 second' WHERE id=$1",[id]);
+        await dispatch();
+        assert.equal((await db.query("SELECT count(*)::int AS n FROM order_offers WHERE order_id=$1",[id])).rows[0].n,0);
+        await db.query("UPDATE orders SET offer_after=now()-interval '1 second' WHERE id=$1",[id]);
+        await dispatch();
+        let electric=(await db.query("SELECT count(*)::int AS n FROM order_offers WHERE order_id=$1 AND rider_id=$2",[id,riders[0]])).rows[0].n;
+        assert.equal(electric,meters===3000?1:0);
+        await db.query("UPDATE orders SET initial_offer_sent_at=now()-interval '61 seconds' WHERE id=$1",[id]);
+        await db.query("UPDATE order_offers SET expires_at=now()-interval '1 second' WHERE order_id=$1",[id]);
+        await dispatch();
+        electric=(await db.query("SELECT count(*)::int AS n FROM order_offers WHERE order_id=$1 AND rider_id=$2",[id,riders[0]])).rows[0].n;
+        assert.equal(electric,meters===3000?1:0);
+        if(meters>3000){
+          await offer(id,riders[0]); // Simulate an obsolete incompatible offer.
+          const dash=await request(`/riders/${riders[0]}/dashboard`,undefined,"GET");
+          assert.ok(!dash.body.pendingOffers.some(o=>o.id===id));
+          assert.equal((await accept(id,riders[0])).body.error,"RIDER_VEHICLE_NOT_ELIGIBLE");
+          await assert.rejects(db.query("SELECT * FROM accept_order_atomic($1,$2)",[id,riders[0]]),/RIDER_VEHICLE_NOT_ELIGIBLE/);
+          await db.query("UPDATE orders SET escalated_at=now()-interval '61 seconds' WHERE id=$1",[id]);
+          assert.equal((await request(`/admin/orders/${id}/assign`,{riderId:riders[0]})).body.error,"RIDER_VEHICLE_NOT_ELIGIBLE");
+          assert.equal((await request(`/admin/orders/${id}/assign`,{riderId:riders[2]})).status,200);
+        }
+        assert.equal((await request(`/admin/orders/${id}/cancel`,{},"PATCH")).status,200);
+      }
+      roadDistance=4000;
+      await db.query("UPDATE rider_profiles SET vehicle_type='DIESEL' WHERE id=$1",[riders[0]]);
+    });
+    await t.test("manual assignment is admin-only and opens after escalation",async()=>{
+      const id=await create();
+      assert.equal((await request(`/admin/orders/${id}/assign`,{riderId:riders[0]},"POST",null)).status,401);
+      assert.equal((await request(`/admin/orders/${id}/assign`,{riderId:riders[0]})).status,409);
+      await db.query("UPDATE orders SET status='OFFERED',initial_offer_sent_at=now()-interval '121 seconds',escalated_at=now()-interval '61 seconds' WHERE id=$1",[id]);
+      const assigned=await request(`/admin/orders/${id}/assign`,{riderId:riders[0]});
+      assert.equal(assigned.status,200,JSON.stringify(assigned));
+      const state=(await db.query("SELECT status,assigned_rider_id FROM orders WHERE id=$1",[id])).rows[0];
+      assert.equal(state.status,"ACCEPTED");assert.equal(state.assigned_rider_id,riders[0]);
+      assert.equal((await request(`/admin/orders/${id}/assign`,{riderId:riders[1]})).status,409);
+      assert.equal((await db.query("SELECT note FROM order_status_history WHERE order_id=$1 AND to_status='ACCEPTED' ORDER BY created_at DESC LIMIT 1",[id])).rows[0].note,"Assigned by admin after escalation");
+      assert.equal((await request(`/admin/orders/${id}/cancel`,{},"PATCH")).status,200);
+    });
+    await t.test("duplicate business login details return specific errors without partial inserts",async()=>{
+      const before=(await db.query("SELECT count(*)::int AS n FROM businesses")).rows[0].n;
+      const data={name:"Duplicate test",phone:"+355688888888",email:"business0@example.invalid",password:"test-password",addressText:"Test address",googleMapsUrl:"https://www.google.com/maps?q=41.33,19.82"};
+      const duplicate=await request("/admin/businesses",data);
+      assert.equal(duplicate.status,409);assert.equal(duplicate.body.error,"USER_EMAIL_EXISTS");
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM businesses")).rows[0].n,before);
+    });
     await t.test("Maps link preview resolves before quote without creating an order",async()=>{
       const before=(await db.query("SELECT count(*)::int AS n FROM orders")).rows[0].n;
       const r=await request(`/businesses/${business}/orders/location`,{googleMapsUrl:payload.googleMapsUrl});
@@ -245,29 +369,54 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
       for(let i=0;i<50&&!events.some(predicate);i++)await new Promise(r=>setTimeout(r,20));
       assert.ok(events.some(predicate),"expected real socket event");
     };
-    await t.test("debit 4999.99 eligible, 5000 and 5001 excluded; one initial offer, 60s escalation, 60s admin alert",async()=>{
+    await t.test("undelivered offer remains pending while rider socket is disconnected",async()=>{
+      const id=await create();
+      await offer(id,riders[0]);
+      await db.query(`INSERT INTO notifications(user_id,order_id,type,channel,status,payload)
+        SELECT user_id,$1,'ORDER_OFFERED_NEARBY_1KM','SOCKET','PENDING',$2::jsonb
+        FROM rider_profiles WHERE id=$3`,[id,JSON.stringify({riderId:riders[0]}),riders[0]]);
+      sockets[0].disconnect();
+      await api.publishPendingNotifications();
+      assert.equal((await db.query("SELECT status FROM notifications WHERE order_id=$1 AND type='ORDER_OFFERED_NEARBY_1KM'",[id])).rows[0].status,"PENDING");
+      const rejoined=new Promise(resolve=>sockets[0].once("connect",()=>sockets[0].emit("rider.join",accountToken(riders[0],"RIDER"),resolve)));
+      sockets[0].connect();assert.equal(await rejoined,true);
+      await api.publishPendingNotifications();
+      await waitEvent(e=>e.event==="order.offered"&&e.room===riders[0]&&e.data.orderId===id);
+      assert.equal((await db.query("SELECT status FROM notifications WHERE order_id=$1 AND type='ORDER_OFFERED_NEARBY_1KM'",[id])).rows[0].status,"SENT");
+      assert.equal((await request(`/admin/orders/${id}/cancel`,{},"PATCH")).status,200);
+    });
+    await t.test("debit 4999.99 eligible, 5000 and 5001 excluded; nearby group, all vehicles after 60s, admin assignment after another 60s",async()=>{
       for(const [index,debit] of [[0,4999.99],[3,5000],[4,5001]])await db.query("INSERT INTO ledger_entries(rider_id,entry_type,amount,direction) VALUES($1,'TEST',$2,'RIDER_OWES_PLATFORM')",[riders[index],debit]);
+      roadDistance=1500;
+      await db.query("UPDATE rider_profiles SET vehicle_type='ELECTRIC' WHERE id=$1",[riders[0]]);
+      await db.query("DELETE FROM rider_locations WHERE rider_id=$1",[riders[2]]);
       const id=await create();await db.query("UPDATE orders SET offer_after=now()-interval '1 second' WHERE id=$1",[id]);
       await dispatch();
       let offers=(await db.query("SELECT rider_id FROM order_offers WHERE order_id=$1",[id])).rows;
-      assert.deepEqual(offers.map(o=>o.rider_id),[riders[0]]);
+      assert.deepEqual(offers.map(o=>o.rider_id).sort(),riders.slice(0,2).sort());
       await waitEvent(e=>e.event==="order.offered"&&e.room===riders[0]&&e.data.orderId===id);
       await db.query("UPDATE orders SET initial_offer_sent_at=now()-interval '59 seconds' WHERE id=$1",[id]);
-      await dispatch();assert.equal((await db.query("SELECT count(*)::int AS n FROM order_offers WHERE order_id=$1",[id])).rows[0].n,1);
+      await dispatch();assert.equal((await db.query("SELECT count(*)::int AS n FROM order_offers WHERE order_id=$1",[id])).rows[0].n,2);
       await db.query("UPDATE orders SET initial_offer_sent_at=now()-interval '61 seconds' WHERE id=$1",[id]);
       await db.query("UPDATE order_offers SET expires_at=now()-interval '1 second' WHERE order_id=$1",[id]);
       await dispatch();
       offers=(await db.query("SELECT rider_id,status FROM order_offers WHERE order_id=$1",[id])).rows;
-      assert.equal(offers.length,3);assert.equal(offers.find(o=>o.rider_id===riders[0]).status,"EXPIRED");
-      await waitEvent(e=>e.room===riders[2]&&e.data.orderId===id); // DIESEL, actual road distance >3km
+      assert.equal(offers.length,3);assert.equal(offers.find(o=>o.rider_id===riders[0]).status,"PENDING");
+      await waitEvent(e=>e.room===riders[2]&&e.data.orderId===id); // DIESEL without GPS, short delivery: included in general offers
       await db.query("UPDATE orders SET escalated_at=now()-interval '59 seconds' WHERE id=$1",[id]);
       await dispatch();assert.equal(events.filter(e=>e.event==="admin.alert"&&e.data.orderId===id).length,0);
+      assert.equal((await request(`/admin/orders/${id}/assign`,{riderId:riders[2]})).status,409);
       await db.query("UPDATE orders SET escalated_at=now()-interval '61 seconds' WHERE id=$1",[id]);
       await dispatch();await waitEvent(e=>e.event==="admin.alert"&&e.data.orderId===id);
       const notices=await request("/admin/notifications",undefined,"GET");
       assert.ok(notices.body.notifications.some(n=>n.order_id===id));
       assert.ok((await accept(id,riders[3])).status>=400);
-      await db.query("UPDATE orders SET status='CANCELLED' WHERE id=$1",[id]);
+      const assigned=await request(`/admin/orders/${id}/assign`,{riderId:riders[2]});
+      assert.equal(assigned.status,200,JSON.stringify(assigned));
+      assert.equal((await db.query("SELECT assigned_rider_id FROM orders WHERE id=$1",[id])).rows[0].assigned_rider_id,riders[2]);
+      assert.equal((await request(`/admin/orders/${id}/cancel`,{},"PATCH")).status,200);
+      roadDistance=4000;
+      await db.query("UPDATE rider_profiles SET vehicle_type='DIESEL' WHERE id=$1",[riders[0]]);
       const resolvedNotices=await request("/admin/notifications",undefined,"GET");
       assert.ok(!resolvedNotices.body.notifications.some(n=>n.order_id===id));
       await db.query("UPDATE ledger_entries SET status='PAID' WHERE entry_type='TEST'");
@@ -384,6 +533,7 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
       assert.equal((await request(`/admin/riders/${id}`,undefined,"DELETE")).status,404);
       assert.equal((await request("/admin/riders",input)).status,201,"deleted rider contact must be reusable");
     });
+    if(process.env.QA_AUDIT === "1") await (await import("./preproduction-audit.mjs")).audit({t,request,db,base,realFetch,business,nearbyBusiness,payload,adminToken,api,create,dispatch});
   } finally {
     globalThis.fetch=realFetch;globalThis.Date=RealDate;
     for(const socket of sockets)socket.close();

@@ -1,0 +1,80 @@
+# Testet automatike
+
+Prindi i suite nuk numërohet si test më vete. 34 unit + 41 integration = 75 skenarë; 67 PASS, 8 FAIL.
+
+- PASS business form distinguishes duplicate credentials, invalid fields and timeouts (2.1018ms)
+- PASS minimal order contract: required value, maps, phone, minutes; optional name/note (7.0599ms)
+- PASS Sunday is open (0.5771ms)
+- PASS Tirana opening boundaries in summer and winter (1.4994ms)
+- PASS automatic meter pricing and one surcharge (0.6814ms)
+- PASS billing requires Google; explicitly requested estimates are separate (1.701ms)
+- PASS Google uses shortest alternative and ignores traffic; errors never become billable estimates (2.731ms)
+- PASS coverage gates both endpoints before Google, even with override; tariff checks destination only (2.6008ms)
+- PASS GPS accepts fresh precise readings and requests uncached high accuracy (1.666ms)
+- PASS GPS retains reported coarse fixes but rejects stale and invalid coordinates (0.4526ms)
+- PASS navigation changes from rider-business to business-customer after pickup (0.7416ms)
+- PASS one dispatch timing rule (1.9796ms)
+- PASS debit 4999.99 allowed; 5000/5001 blocked; config above 5000 rejected (1.0725ms)
+- PASS Maps resolves short link, preserves original, rejects redirect to non-Google host (40.3543ms)
+- PASS second order uses the two business and destination pairs with a 500 m cap (13.1693ms)
+- PASS route legs all use shortest distance, no silent estimate without a key (2.5164ms)
+- PASS Maps short links retry transient failures and expose a stable timeout code (1.4193ms)
+- PASS business: missing account invalidates the stored login (44.7522ms)
+- PASS business: malformed stored id is rejected before a request (0.7296ms)
+- PASS business: a server outage preserves the login for retry (1.4686ms)
+- PASS business: a network error preserves the login (0.6787ms)
+- PASS business: an unrelated 404 does not invalidate the login (1.4434ms)
+- PASS business: an existing account loads normally (2.2255ms)
+- PASS rider: missing account invalidates the stored login (1.7225ms)
+- PASS rider: malformed stored id is rejected before a request (0.585ms)
+- PASS rider: a server outage preserves the login for retry (5.0393ms)
+- PASS rider: a network error preserves the login (1.0498ms)
+- PASS rider: an unrelated 404 does not invalidate the login (2.6098ms)
+- PASS rider: an existing account loads normally (0.6374ms)
+- PASS picked up orders need only delivery; inactive offers never become route stops (2.4409ms)
+- PASS two orders: respects pickup before delivery and beats greedy nearest stop (1.2697ms)
+- PASS unreachable destination fails rather than inventing a route (0.9426ms)
+- PASS already collected order may be delivered before another pickup (0.4514ms)
+- PASS rider phone component renders a visible clickable mobile telephone link (11.799ms)
+
+- PASS fresh migrations and repeat run
+- PASS reverse geocoding never substitutes a cached street when Google has no result
+- PASS rider GPS reaches database and admin map with its reported accuracy
+- PASS admin, business and rider APIs require matching signed sessions
+- PASS admin business location uses Maps link on create/update; zones are read-only
+- PASS new accounts require login email; edit and password reset permit login
+- PASS eight-minute wait and 3000/3001m vehicle boundary across dispatch, dashboard, acceptance and admin
+- PASS manual assignment is admin-only and opens after escalation
+- PASS duplicate business login details return specific errors without partial inserts
+- PASS Maps link preview resolves before quote without creating an order
+- PASS valid order without name/note; original link and coordinates retained; finance
+- PASS negative order value and admin-only cancellation
+- PASS missing fields, invalid and unresolved Maps links rejected
+- PASS outside coverage quote/create rejected without inserts
+- PASS pricing 3/4/5km, outside tariff +100, client distance ignored
+- PASS 23:00 closes ordering; Sunday stays open
+- PASS undelivered offer remains pending while rider socket is disconnected
+- PASS debit 4999.99 eligible, 5000 and 5001 excluded; nearby group, all vehicles after 60s, admin assignment after another 60s
+- PASS two simultaneous accepts: exactly one winner and all other offers closed
+- PASS second blocked until the first order is picked up
+- PASS second order requires another nearby business and destinations within 500 m
+- PASS third active order rejected
+- PASS debit alert persisted and emitted when delivery reaches threshold
+- PASS database rejects a debit limit over 5000; phone link exists
+- PASS admin removes businesses without losing order history or reusing an active session
+- PASS admin removes riders, closes offers and retains delivered-order finance
+- FAIL QA01 customer identity header alone must not authorize profile reads
+- FAIL QA02 customer identity header alone must not authorize profile writes
+- FAIL QA03 public endpoint must not create orders on behalf of a business anonymously
+- FAIL QA04 customer order history query works for a registered customer
+- FAIL QA05 cart rejects a product belonging to another business
+- FAIL QA06 password reset revokes previous rider session
+- PASS QA07 malformed IDs must not expose database diagnostics
+- PASS QA08 malformed and expired-signature admin credentials are rejected
+- PASS QA09 categories validate empty names and persist Unicode names
+- PASS QA10 unknown tracking code is rejected
+- FAIL QA11 suspended admin loses an already joined socket room
+- FAIL QA12 nearby dispatch excludes day-old GPS
+- PASS QA13 admin pagination and status filter agree with database
+- PASS QA14 public catalog and single-business lookup work
+- PASS QA15 invalid JSON and unsupported mutation are rejected

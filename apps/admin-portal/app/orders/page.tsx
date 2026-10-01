@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AdminShell } from "../../components/admin-shell";
-import { cancelAdminOrder, formatLek, getAdminOrders, type AdminOrder } from "../../lib/api";
+import { assignAdminOrder, cancelAdminOrder, formatLek, getAdminOrders, getAdminRiders, type AdminOrder, type AdminRider } from "../../lib/api";
 
 const statuses = [
   ["", "Të gjitha statuset"], ["CREATED", "Krijuar"], ["OFFERED", "Ofertuar"],
@@ -13,6 +13,8 @@ const statuses = [
 
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
+  const [riders, setRiders] = useState<AdminRider[]>([]);
+  const [selectedRiders, setSelectedRiders] = useState<Record<string,string>>({});
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
@@ -23,15 +25,20 @@ export default function AdminOrdersPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const result = await getAdminOrders({ q, status, page });
+      const [result, riderResult] = await Promise.all([getAdminOrders({ q, status, page }), getAdminRiders()]);
       setOrders(result.orders);
+      setRiders(riderResult.riders);
       setTotal(result.total);
     } catch {
       setMessage("Porositë nuk u lexuan. Hyr sërish si admin dhe provo përsëri.");
     }
   }, [q, status, page]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    const timer = setInterval(() => void refresh(), 5000);
+    return () => clearInterval(timer);
+  }, [refresh]);
 
   async function cancel(order: AdminOrder) {
     setBusy(true);
@@ -42,6 +49,19 @@ export default function AdminOrdersPage() {
       setMessage(`Porosia ${order.code} u anulua.`);
     } catch {
       setMessage("Anulimi nuk u krye. Rifresko porositë dhe provo përsëri.");
+    } finally { setBusy(false); }
+  }
+
+  async function assign(order: AdminOrder) {
+    const riderId = selectedRiders[order.id];
+    if (!riderId) return;
+    setBusy(true);
+    try {
+      await assignAdminOrder(order.id, riderId);
+      await refresh();
+      setMessage(`Porosia ${order.code} iu caktua motoristit.`);
+    } catch {
+      setMessage("Caktimi dështoi. Kontrollo statusin e porosisë dhe përshtatshmërinë e motoristit.");
     } finally { setBusy(false); }
   }
 
@@ -75,6 +95,14 @@ export default function AdminOrdersPage() {
             )}
           </div>
           <p className="mt-3">Vlera e porosisë: {formatLek(order.productValue)} · Transporti: {formatLek(order.transportFee)} · Klienti: <strong>{formatLek(order.totalAmount)}</strong></p>
+          {order.status === "OFFERED" && !order.manualAssignmentReady && <p className="muted mt-3">Ofertim automatik. Caktimi nga admini hapet 1 minutë pas njoftimit të përgjithshëm.</p>}
+          {order.status === "OFFERED" && order.manualAssignmentReady && !order.assignedRiderId && <div className="mt-3 flex flex-wrap items-center gap-2">
+            <select aria-label={`Zgjidh motoristin për ${order.code}`} className="admin-input h-11 rounded-xl border px-3" value={selectedRiders[order.id] ?? ""} onChange={event => setSelectedRiders(previous => ({...previous,[order.id]:event.target.value}))}>
+              <option value="">Zgjidh motoristin</option>
+              {riders.filter(rider => rider.status === "ACTIVE" && rider.isOnline && !rider.isDebitBlocked && (order.routeDistanceMeters <= 3000 || rider.vehicleType === "DIESEL")).map(rider => <option key={rider.id} value={rider.id}>{rider.name} · {rider.vehicleType}</option>)}
+            </select>
+            <button type="button" className="secondary-button" disabled={busy || !selectedRiders[order.id]} onClick={() => void assign(order)}>Cakto motoristin</button>
+          </div>}
         </article>)}
       </div>
       <div className="mt-5 flex items-center justify-end gap-3">

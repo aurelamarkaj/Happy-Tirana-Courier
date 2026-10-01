@@ -15,7 +15,6 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { io } from "socket.io-client";
 import {
   OperationsShell,
   OperationsMetric,
@@ -29,18 +28,16 @@ import {
   rejectOrder,
   reverseAddress,
   RiderApiError,
-  sendRiderLocation,
   setRiderAvailability,
   type RiderDashboard,
   type RiderOrder,
   type RoutePoint,
 } from "../lib/api";
+import { useRiderGps } from "../components/rider-gps";
+import { GPS_OPTIONS, gpsIssue } from "../lib/gps";
 import { riderNavigation } from "../components/rider-navigation";
 import { acceptErrorMessage } from "../lib/accept-error";
 import { getRiderSession } from "../lib/rider-session";
-
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 export default function RiderHome() {
   const router = useRouter();
@@ -50,7 +47,8 @@ export default function RiderHome() {
   const [currentAddress, setCurrentAddress] = useState(
     "Vendndodhja shfaqet kur je online.",
   );
-  const [currentGps, setCurrentGps] = useState<RoutePoint | null>(null);
+
+  const {location:currentGps,accuracy:gpsAccuracy,message:gpsMessage} = useRiderGps();
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [orderView, setOrderView] = useState("offers");
@@ -67,84 +65,19 @@ export default function RiderHome() {
   }, [router]);
 
   useEffect(() => {
-    const session = getRiderSession();
-    if (!session) return;
-
-    const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL ?? apiBaseUrl.replace(/\/api\/?$/, ""));
-    socket.on("connect", () => { socket.emit("rider.join", session.token); refreshDashboard(); });
-    socket.on(
-      "order.offered",
-      (payload?: { message?: string; distanceMeters?: number | null }) => {
-        const distance =
-          typeof payload?.distanceMeters === "number"
-            ? ` Afërsisht ${Math.round(payload.distanceMeters)}m nga pika e marrjes.`
-            : "";
-        setMessage(
-          `${payload?.message ?? "Ke një porosi të re afër teje."}${distance}`,
-        );
-        refreshDashboard();
-      },
-    );
-    socket.on("order.accepted", refreshDashboard);
-    socket.on("order.status_changed", refreshDashboard);
-
-    return () => {
-      socket.disconnect();
-    };
+    window.addEventListener("rider-order-update", refreshDashboard);
+    return () => window.removeEventListener("rider-order-update", refreshDashboard);
   }, []);
 
   useEffect(() => {
-    if (!dashboard?.rider.isOnline || !navigator.geolocation) {
-      if (!dashboard?.rider.isOnline) {
-        setCurrentAddress("Vendndodhja shfaqet kur je online.");
-        setCurrentGps(null);
-      }
-      return;
-    }
-
-    let reverseTimeout: number | undefined;
-    const watcherId = navigator.geolocation.watchPosition(
-      (position) => {
-        const next = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        };
-        setCurrentGps(next);
-        setCurrentAddress("Po lexohet adresa aktuale...");
-        sendRiderLocation({
-          ...next,
-          orderId: dashboard.activeOrder?.id ?? null,
-          speed: position.coords.speed ?? undefined,
-          heading: position.coords.heading ?? undefined,
-        }).catch(() => undefined);
-
-        if (reverseTimeout) window.clearTimeout(reverseTimeout);
-        reverseTimeout = window.setTimeout(() => {
-          reverseAddress(next)
-            .then((data) => {
-              const address = data.address;
-              setCurrentAddress(
-                address
-                  ? address.details || `${address.label}, ${address.city}`
-                  : `${next.lat.toFixed(5)}, ${next.lng.toFixed(5)}`,
-              );
-            })
-            .catch(() =>
-              setCurrentAddress(
-                `${next.lat.toFixed(5)}, ${next.lng.toFixed(5)}`,
-              ),
-            );
-        }, 650);
-      },
-      () => setCurrentAddress("Lejo GPS ne browser per vendndodhjen live."),
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 },
-    );
-
-    return () => {
-      navigator.geolocation.clearWatch(watcherId);
-      if (reverseTimeout) window.clearTimeout(reverseTimeout);
-    };
-  }, [dashboard?.activeOrder?.id, dashboard?.rider.isOnline]);
+    let cancelled=false;
+    if(!currentGps || (gpsAccuracy ?? 0)>100){setCurrentAddress(gpsMessage);return;}
+    setCurrentAddress("Po lexohet adresa aktuale...");
+    void reverseAddress(currentGps).then(({address})=>{
+      if(!cancelled)setCurrentAddress(address ? address.details || address.label : "Emri i rrugës nuk u gjet. Pozicioni GPS shfaqet më poshtë.");
+    }).catch(()=>{if(!cancelled)setCurrentAddress("Adresa nuk u lexua; pozicioni GPS mbetet i disponueshëm.");});
+    return()=>{cancelled=true;};
+  },[currentGps,gpsAccuracy,gpsMessage]);
 
   async function refreshDashboard() {
     setLoadingDashboard(true);
@@ -152,7 +85,6 @@ export default function RiderHome() {
       const data = await getRiderDashboard();
       setDashboard(data);
       setLoadError(false);
-      setMessage("");
     } catch (error) {
       if (error instanceof RiderApiError && error.status === 401) {
         logoutRider();
@@ -179,12 +111,12 @@ export default function RiderHome() {
       }
       navigator.geolocation.getCurrentPosition(
         (position) =>
-          resolve({
+          resolve(gpsIssue(position) ? undefined : {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
           }),
         () => resolve(undefined),
-        { enableHighAccuracy: true, timeout: 10000 },
+        GPS_OPTIONS,
       );
     });
   }
@@ -199,9 +131,12 @@ export default function RiderHome() {
         location,
       );
       setDashboard(data);
+      window.dispatchEvent(new Event("rider-order-update"));
       setMessage(
         data.rider.isOnline
-          ? "Je online. Porosite e reja vijne sipas afersise me GPS."
+          ? location
+            ? "Je online. Porositë e reja vijnë sipas afërsisë me GPS."
+            : "Je online, por GPS mungon. Lejo vendndodhjen për ofertat brenda 1 km. Ofertat e përgjithshme mbeten të disponueshme."
           : "Je offline. GPS nuk transmetohet.",
       );
     } catch {
@@ -461,9 +396,10 @@ export default function RiderHome() {
             <MapPin size={19} />
             <p>{currentAddress}</p>
           </div>
+          <p className="ops-subtle" role="status">{gpsMessage}</p>
           {currentGps && (
             <p className="ops-subtle">
-              {currentGps.lat.toFixed(5)}, {currentGps.lng.toFixed(5)}
+              {currentGps.lat.toFixed(6)}, {currentGps.lng.toFixed(6)} · Saktësia GPS: ±{Math.round(gpsAccuracy ?? 0)} m
             </p>
           )}
         </section>

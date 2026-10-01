@@ -12,7 +12,7 @@ export async function assertRiderEligible(client: Pick<PoolClient, "query">, rid
   const rider = result.rows[0];
   if (!rider?.is_online || rider.status !== "ACTIVE" || rider.user_status !== "ACTIVE") throw new Error("RIDER_NOT_ELIGIBLE");
   if (!debitEligible(Number(rider.debit), Number(rider.debit_limit_all))) throw new Error("RIDER_DEBIT_LIMIT_REACHED");
-  if (!(rider.vehicle_type === "ELECTRIC" || (rider.vehicle_type === "DIESEL" && Number(rider.route_distance_meters)>3000)))
+  if (!['ELECTRIC', 'DIESEL'].includes(rider.vehicle_type) || (Number(rider.route_distance_meters) > 3000 && rider.vehicle_type !== 'DIESEL'))
     throw new Error("RIDER_VEHICLE_NOT_ELIGIBLE");
   await assertSecondOrderEligible(client, riderId, orderId, apiKey);
 }

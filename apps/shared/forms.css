@@ -1,12 +1,19 @@
 /* Keep form focus consistent across all three portals. */
-body :is(.admin-page, .business-page, .rider-page, .ops-frame) :is(input, select, textarea):focus {
+body :is(input, select, textarea):focus {
   outline: none;
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: #ef601f;
 }
 
 /* Icon fields draw their border on the wrapper, not the input itself. */
-body :is(.admin-page, .business-page, .rider-page, .ops-frame) :is(label, span, div):has(> :is(input, select, textarea):focus) {
-  border-color: rgba(255, 255, 255, 0.35);
+body :is(label, span, div).border:has(> :is(input, select, textarea):focus) {
+  border-color: #ef601f;
+  box-shadow: 0 0 0 3px rgb(239 96 31 / 15%);
+}
+
+/* Standalone controls keep the same visible focus treatment as icon fields. */
+body :is(input, select, textarea).border:focus {
+  border-color: #ef601f;
+  box-shadow: 0 0 0 3px rgb(239 96 31 / 15%);
 }
 
 body :is(.admin-page, .business-page, .rider-page, .ops-frame) :is(input[type="checkbox"], input[type="radio"]):focus-visible {

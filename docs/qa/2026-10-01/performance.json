@@ -1,0 +1,62 @@
+[
+  {
+    "path": "/api/health",
+    "status": 200,
+    "samples": [
+      180.91,
+      22.71,
+      7.9,
+      4.42,
+      6.95
+    ],
+    "median": 7.9
+  },
+  {
+    "path": "/api/public/businesses",
+    "status": 200,
+    "samples": [
+      10.5,
+      9.92,
+      7.92,
+      9.88,
+      6.96
+    ],
+    "median": 9.88
+  },
+  {
+    "path": "/admin/login",
+    "status": 200,
+    "samples": [
+      21.22,
+      8.84,
+      8.42,
+      15.71,
+      8.44
+    ],
+    "median": 8.84
+  },
+  {
+    "path": "/business/login",
+    "status": 200,
+    "samples": [
+      12.71,
+      7.2,
+      10.75,
+      7.88,
+      9.71
+    ],
+    "median": 9.71
+  },
+  {
+    "path": "/rider/login",
+    "status": 200,
+    "samples": [
+      6.3,
+      8.71,
+      5.76,
+      8.9,
+      7.91
+    ],
+    "median": 7.91
+  }
+]

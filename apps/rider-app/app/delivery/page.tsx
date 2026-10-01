@@ -17,6 +17,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { OperationsShell } from "../../../shared/operations-shell";
 import { riderNavigation } from "../../components/rider-navigation";
+import { useRiderGps } from "../../components/rider-gps";
+import { riderNavigationUrl } from "../../lib/navigation";
 import { RiderMap } from "../../components/rider-map";
 import {
   logoutRider,
@@ -34,6 +36,7 @@ import { acceptErrorMessage } from "../../lib/accept-error";
 
 export default function DeliveryPage() {
   const router = useRouter();
+  const {location} = useRiderGps();
   const [dashboard, setDashboard] = useState<RiderDashboard | null>(null);
   const [message, setMessage] = useState("Duke lexuar porosine...");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -115,7 +118,7 @@ export default function DeliveryPage() {
     setBusy(true);
     try {
       await updateOrderStatus(order.id, status);
-      setSelectedId(null);
+      setSelectedId(order.id);
       await refresh();
     } catch {
       setMessage(
@@ -126,9 +129,7 @@ export default function DeliveryPage() {
     }
   }
 
-  const navigationUrl = order
-    ? `https://www.google.com/maps/dir/?api=1&destination=${order.status === "PICKED_UP" ? `${order.dropoffLat},${order.dropoffLng}` : `${order.pickupLat},${order.pickupLng}`}&travelmode=driving&dir_action=navigate`
-    : "#";
+  const navigationUrl = riderNavigationUrl(order,location) ?? "#";
 
   return (
     <OperationsShell

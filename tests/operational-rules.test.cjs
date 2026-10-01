@@ -7,8 +7,8 @@ const {resolveGoogleMapsDestination}=require("../apps/api/src/maps-location.ts")
 const {getGoogleRoadRoute}=require("../apps/api/src/google-routes.ts");
 
 test("one dispatch timing rule",()=>{
-  for(const ready of [0,1,8,9,10])assert.equal(rules.firstOfferDelayMinutes(ready),9);
-  assert.equal(rules.firstOfferDelayMinutes(15),14);
+  for(const ready of [0,1,8,9,10])assert.equal(rules.firstOfferDelayMinutes(ready),8);
+  assert.equal(rules.firstOfferDelayMinutes(20),8);
 });
 test("debit 4999.99 allowed; 5000/5001 blocked; config above 5000 rejected",()=>{
   const old=process.env.RIDER_DEBIT_LIMIT_ALL;
@@ -69,4 +69,13 @@ test("route legs all use shortest distance, no silent estimate without a key",as
   });
   const route=await getGoogleRoadRoute("test",{originLat:41,originLng:19,destinationLat:42,destinationLng:20,intermediates:[{lat:41.5,lng:19.5}]});
   assert.equal(calls,2);assert.equal(route.distanceMeters,200);
+});
+
+test("Maps short links retry transient failures and expose a stable timeout code",async t=>{
+ let calls=0;
+ t.mock.method(global,"fetch",async()=>{if(++calls===1)throw new DOMException("Timeout","TimeoutError");return new Response(null,{status:302,headers:{location:"https://www.google.com/maps?q=41.341166,19.8266981"}});});
+ const result=await resolveGoogleMapsDestination("https://maps.app.goo.gl/yvi9q5qznFk5d5au7");
+ assert.equal(calls,2);assert.equal(result.lat,41.341166);assert.equal(result.lng,19.8266981);
+ global.fetch.mock.mockImplementation(async()=>{throw new DOMException("Timeout","TimeoutError");});
+ await assert.rejects(resolveGoogleMapsDestination("https://maps.app.goo.gl/test"),/GOOGLE_MAPS_LINK_TIMEOUT/);
 });

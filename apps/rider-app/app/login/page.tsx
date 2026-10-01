@@ -4,7 +4,7 @@ import { ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-import { loginRider } from "../../lib/api";
+import { RiderApiError, loginRider } from "../../lib/api";
 
 export default function RiderLoginPage() {
   const router = useRouter();
@@ -32,8 +32,12 @@ export default function RiderLoginPage() {
     try {
       await loginRider({ email, password });
       router.replace("/");
-    } catch {
-      setMessage("Hyrja nuk u krye. Kontrollo email-in dhe fjalëkalimin.");
+    } catch (error) {
+      setMessage(error instanceof RiderApiError && error.code === "RIDER_SUSPENDED"
+        ? "Llogaria e motoristit është e pezulluar dhe nuk mund të hysh tani. Kontakto administratorin."
+        : error instanceof RiderApiError && error.code === "RIDER_INACTIVE"
+          ? "Llogaria e motoristit është joaktive dhe nuk mund të hysh tani. Kontakto administratorin për aktivizim."
+          : "Hyrja nuk u krye. Kontrollo email-in dhe fjalëkalimin.");
     } finally {
       setSubmitting(false);
     }

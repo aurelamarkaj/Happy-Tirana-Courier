@@ -8,22 +8,25 @@ export class ApiError extends Error {
   code: string;
   status: number;
 
-  constructor(status: number, code: string) {
+  issues: Array<{path: (string | number)[]; message: string}>;
+
+  constructor(status: number, code: string, issues: Array<{path: (string | number)[]; message: string}> = []) {
     super(code);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.issues = issues;
   }
 }
 
-async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function apiFetch<T>(path: string, init: RequestInit = {}, timeoutMs = apiTimeoutMs): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   const token=getAdminSession()?.token;
   if(token) headers.set("Authorization",`Bearer ${token}`);
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), apiTimeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -34,12 +37,15 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!response.ok) {
       const body = await response.text();
       let code = body;
+      let issues: Array<{path: (string | number)[]; message: string}> = [];
       try {
-        code = (JSON.parse(body) as { error?: string }).error ?? body;
+        const parsed = JSON.parse(body);
+        code = parsed.error ?? body;
+        issues = Array.isArray(parsed.issues) ? parsed.issues : [];
       } catch {
         code = body;
       }
-      throw new ApiError(response.status, code);
+      throw new ApiError(response.status, code, issues);
     }
 
     return response.json() as Promise<T>;
@@ -100,6 +106,8 @@ export interface AdminRider {
   lastSeenAt: string | null;
   lastLat?: number;
   lastLng?: number;
+  gpsAccuracy?: number;
+  gpsRecordedAt?: string | null;
   platformDue: number;
   debitLimitAll: number;
   isDebitBlocked: boolean;
@@ -188,7 +196,7 @@ export async function createAdminBusiness(input: {
   return apiFetch<{ business: AdminBusiness }>("/admin/businesses", {
     method: "POST",
     body: JSON.stringify(input),
-  });
+  }, 30000);
 }
 
 export async function updateAdminBusiness(
@@ -212,6 +220,12 @@ export async function updateAdminBusiness(
   return apiFetch<{ business: AdminBusiness }>(`/admin/businesses/${id}`, {
     method: "PATCH",
     body: JSON.stringify(input),
+  }, 30000);
+}
+
+export async function resetAdminBusinessPassword(id: string, password: string) {
+  return apiFetch<{ok:true}>(`/admin/businesses/${id}/password`, {
+    method: "PATCH", body: JSON.stringify({password}),
   });
 }
 
@@ -274,6 +288,12 @@ export async function updateAdminRider(
   return apiFetch<{ rider: AdminRider }>(`/admin/riders/${id}`, {
     method: "PATCH",
     body: JSON.stringify(input),
+  });
+}
+
+export async function resetAdminRiderPassword(id: string, password: string) {
+  return apiFetch<{ok:true}>(`/admin/riders/${id}/password`, {
+    method: "PATCH", body: JSON.stringify({password}),
   });
 }
 
@@ -346,6 +366,11 @@ export async function getAdminFinance() {
 export async function cancelAdminOrder(id:string) {
   return apiFetch<{ok:boolean}>(`/admin/orders/${id}/cancel`,{method:"PATCH"});
 }
+export async function assignAdminOrder(id:string,riderId:string) {
+  return apiFetch<{ok:boolean;orderId:string;riderId:string}>(`/admin/orders/${id}/assign`,{
+    method:"POST",body:JSON.stringify({riderId})
+  });
+}
 
 export interface AdminBusinessOrder {
   id: string; code: string; status: string; createdAt: string;
@@ -354,6 +379,9 @@ export interface AdminBusinessOrder {
 }
 export interface AdminOrder extends AdminBusinessOrder {
   businessId: string; businessName: string; customerName: string | null;
+  escalatedAt: string | null; assignedRiderId: string | null;
+  manualAssignmentReady: boolean;
+  routeDistanceMeters: number;
 }
 export async function getAdminOrders(input: {q?: string; status?: string; page?: number} = {}) {
   const query = new URLSearchParams();

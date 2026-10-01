@@ -32,11 +32,14 @@ import {
   deleteAdminBusiness,
   getAdminBusinessCategories,
   getAdminBusinesses,
+  resetAdminBusinessPassword,
   updateAdminBusiness,
   ApiError,
   type AdminBusiness,
   type AdminBusinessCategory,
 } from "../../lib/api";
+
+import { businessErrorMessage } from "../../lib/business-error";
 
 const emptyForm = {
   name: "",
@@ -153,6 +156,7 @@ export default function BusinessesPage() {
       if (editingId) {
         const { password: _password, ...updateInput } = input;
         await updateAdminBusiness(editingId, updateInput);
+        if (_password) await resetAdminBusinessPassword(editingId, _password);
       } else {
         await createAdminBusiness(input);
       }
@@ -165,10 +169,8 @@ export default function BusinessesPage() {
           ? "Biznesi u përditësua me sukses."
           : "Biznesi u krijua me sukses.",
       );
-    } catch {
-      setMessage(
-        "Biznesi nuk u krijua. Kontrollo të dhënat dhe provo përsëri.",
-      );
+    } catch (error) {
+      setMessage(businessErrorMessage(error, Boolean(editingId)));
     } finally {
       setSaving(false);
     }
@@ -412,6 +414,7 @@ export default function BusinessesPage() {
                   }
                   placeholder="biznes@example.com"
                   type="email"
+                  required
                   value={form.email}
                 />
               </Field>

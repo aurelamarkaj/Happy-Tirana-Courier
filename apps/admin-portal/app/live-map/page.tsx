@@ -1,6 +1,7 @@
 "use client";
 
 import { Bike, MapPin, RadioTower, Route } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AdminLiveMap } from "../../components/admin-map";
 import { AdminMetric, AdminShell } from "../../components/admin-shell";
@@ -41,7 +42,7 @@ export default function LiveMapPage() {
     const riderEvents = riders
       .slice(0, 3)
       .map(
-        (rider) => `${rider.name} · ${rider.isOnline ? "Online" : "Offline"}`,
+        (rider) => `${rider.name} · ${rider.isOnline ? "Online" : "Offline"}${rider.lastLat == null || rider.lastLng == null ? " · GPS mungon" : rider.gpsRecordedAt && Date.now()-new Date(rider.gpsRecordedAt).getTime()>60000 ? " · GPS i vjetër" : rider.gpsAccuracy != null ? ` · GPS ±${Math.round(rider.gpsAccuracy)} m` : ""}`,
       );
     return [...orderEvents, ...riderEvents];
   }, [orders, riders]);
@@ -51,12 +52,13 @@ export default function LiveMapPage() {
       description="Ndiq motoristët online, porositë aktive dhe përditësimet e dorëzimeve në kohë reale."
       eyebrow="Realtime"
       title="Harta live"
+      action={<Link className="primary-button" href="/orders">Cakto motoristin te porositë</Link>}
     >
       <section className="grid gap-3 md:grid-cols-3">
         <AdminMetric icon={RadioTower} label="Refresh" value="8 sek" />
         <AdminMetric
           icon={Bike}
-          label="Motoriste live"
+          label="Motoristë online"
           value={String(riders.filter((rider) => rider.isOnline).length)}
         />
         <AdminMetric

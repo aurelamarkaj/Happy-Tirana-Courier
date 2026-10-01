@@ -63,11 +63,9 @@ const io = new Server(server, {
     credentials: true,
   },
 });
-const nearbyRiderOfferLimit = 1;
 const riderDebitLimitAll = debitLimit();
 const nearbyRiderRadiusMeters = Number(process.env.NEARBY_RIDER_RADIUS_METERS ?? 1000);
 const offerEscalationSeconds = OFFER_ESCALATION_SECONDS;
-const longDistanceThresholdMeters = 3000;
 
 const ringSurchargeDefaultAll = 100;
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim() ?? "";
@@ -496,7 +494,7 @@ async function getBusinessDashboardOrderById(
             c.phone AS customer_phone,
             a.address_text AS delivery_address,
             u.name AS rider_name,
-            COUNT(oo.id) FILTER (WHERE oo.status = 'PENDING')::int AS offered_rider_count
+            COUNT(oo.id)::int AS offered_rider_count
      FROM orders o
      LEFT JOIN customers c ON c.id = o.customer_id
      JOIN addresses a ON a.id = o.delivery_address_id
@@ -560,6 +558,8 @@ function mapAdminRider(row: Record<string, unknown>) {
     lastSeenAt: row.last_seen_at,
     lastLat: numericOrUndefined(row.last_lat),
     lastLng: numericOrUndefined(row.last_lng),
+    gpsAccuracy: numericOrUndefined(row.gps_accuracy),
+    gpsRecordedAt: row.gps_recorded_at ?? null,
     platformDue: Number(row.platform_due ?? 0),
     debitLimitAll: Math.min(Number(row.debit_limit_all ?? riderDebitLimitAll), riderDebitLimitAll),
     isDebitBlocked:
@@ -751,14 +751,9 @@ async function offerBusinessOrderToEligibleRiders(
      WHERE rp.is_online = true
        AND rp.status = 'ACTIVE'
        AND u.status = 'ACTIVE'
-       AND COALESCE(debt.platform_due, 0) < LEAST(rp.debit_limit_all, $6)
+       AND COALESCE(debt.platform_due, 0) < LEAST(rp.debit_limit_all, $4)
        AND rp.vehicle_type IN ('ELECTRIC', 'DIESEL')
-       AND ($3::text <> 'ALL' OR rp.id IS DISTINCT FROM
-         (SELECT initial_offer_rider_id FROM orders WHERE id=$1))
-       AND (
-         (SELECT route_distance_meters FROM order_context) > $5
-         OR rp.vehicle_type = 'ELECTRIC'
-       )
+       AND ((SELECT route_distance_meters FROM order_context) <= 3000 OR rp.vehicle_type = 'DIESEL')
        AND (
          SELECT COUNT(*) FROM orders active_order
          WHERE active_order.assigned_rider_id = rp.id
@@ -769,26 +764,24 @@ async function offerBusinessOrderToEligibleRiders(
          FROM order_offers existing
          WHERE existing.order_id = $1
            AND existing.rider_id = rp.id
-           AND existing.status = 'PENDING'
+           AND existing.status IN ('PENDING', 'REJECTED')
        )
        AND (
-         $3::text = 'ALL'
+         $2::text = 'ALL'
          OR (
            latest.point IS NOT NULL
            AND ST_Distance(
              latest.point,
              ST_SetSRID(ST_MakePoint((SELECT lng FROM order_context), (SELECT lat FROM order_context)), 4326)::geography
-           ) <= $4
+           ) <= $3
          )
        )
-     ORDER BY distance_meters ASC NULLS LAST, rp.last_seen_at DESC NULLS LAST OFFSET ($2::int - 1)
+     ORDER BY distance_meters ASC NULLS LAST, rp.last_seen_at DESC NULLS LAST
      `,
     [
       orderId,
-      nearbyRiderOfferLimit,
       scope,
       nearbyRiderRadiusMeters,
-      longDistanceThresholdMeters,
       riderDebitLimitAll,
     ],
   );
@@ -800,7 +793,6 @@ async function offerBusinessOrderToEligibleRiders(
     try {
       await assertRiderEligible(client, rider.id, orderId, googleMapsApiKey);
       eligible.push(rider);
-      if (scope === "NEARBY") break;
     } catch (error) {
       if (!(error instanceof Error) || !/^(SECOND_ORDER_|RIDER_|GOOGLE_DIRECTIONS_)/.test(error.message)) throw error;
     }
@@ -809,6 +801,7 @@ async function offerBusinessOrderToEligibleRiders(
   await client.query(
     `UPDATE orders
      SET status = 'OFFERED',
+         last_dispatch_checked_at = now(),
          version = version + 1,
          offer_scope = $2,
          initial_offer_sent_at = COALESCE(initial_offer_sent_at, now()),
@@ -823,14 +816,14 @@ async function offerBusinessOrderToEligibleRiders(
   for (const rider of eligible) {
     await client.query(
       `INSERT INTO order_offers (order_id, rider_id, status, expires_at)
-       VALUES ($1, $2, 'PENDING', now() + ($3::int * interval '1 second'))
+       VALUES ($1, $2, 'PENDING', CASE WHEN $4::text='ALL' THEN 'infinity'::timestamptz ELSE now() + ($3::int * interval '1 second') END)
        ON CONFLICT (order_id, rider_id) DO UPDATE
        SET status = 'PENDING',
            sent_at = now(),
            responded_at = NULL,
            expires_at = EXCLUDED.expires_at
        WHERE order_offers.status IN ('PENDING', 'EXPIRED', 'CANCELLED')`,
-      [orderId, rider.id, offerEscalationSeconds],
+      [orderId, rider.id, offerEscalationSeconds, scope],
     );
     await client.query(
       `INSERT INTO notifications (user_id, order_id, type, channel, status, payload, sent_at)
@@ -901,6 +894,7 @@ export async function publishPendingNotifications() {
         WHERE oo.order_id=n.order_id AND oo.rider_id=rp.id AND oo.status='PENDING'
           AND oo.expires_at>now() AND o.assigned_rider_id IS NULL
           AND rp.is_online AND rp.status='ACTIVE' AND u.status='ACTIVE'
+          AND (o.route_distance_meters <= 3000 OR rp.vehicle_type='DIESEL')
           AND (SELECT COALESCE(sum(amount),0) FROM ledger_entries WHERE rider_id=rp.id
             AND direction='RIDER_OWES_PLATFORM' AND status='OPEN') < LEAST(rp.debit_limit_all, 5000)) AS offer_valid
       FROM notifications n JOIN users u ON u.id=n.user_id
@@ -912,10 +906,12 @@ export async function publishPendingNotifications() {
         await client.query("UPDATE notifications SET status='CLOSED' WHERE id=$1", [notification.id]);
         continue;
       }
-      if (riderOffer) io.to(`rider:${notification.rider_id}`).emit("order.offered", {
+      const room = riderOffer ? `rider:${notification.rider_id}` : "admin";
+      if (!io.sockets.adapter.rooms.get(room)?.size) continue;
+      if (riderOffer) io.to(room).emit("order.offered", {
         ...notification.payload, orderId: notification.order_id, notificationId: notification.id,
       });
-      else io.to("admin").emit("admin.alert", {
+      else io.to(room).emit("admin.alert", {
         id: notification.id, type: notification.type, orderId: notification.order_id,
         payload: notification.payload,
       });
@@ -996,6 +992,16 @@ async function processDueOrderDispatches(client: PoolClient) {
       "INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES ($1, 'OFFERED', 'OFFERED', 'Escalated to all eligible riders after 60 seconds')",
       [order.id],
     );
+  }
+
+  // Also reach riders who come online after expansion. Existing pending and
+  // rejected offers are excluded, so repeated checks do not resend the offer.
+  const expanded = await client.query(`SELECT id FROM orders
+    WHERE status='OFFERED' AND assigned_rider_id IS NULL AND escalated_at IS NOT NULL
+      AND (last_dispatch_checked_at IS NULL OR last_dispatch_checked_at < now()-interval '5 seconds')
+    ORDER BY last_dispatch_checked_at NULLS FIRST LIMIT 50 FOR UPDATE SKIP LOCKED`);
+  for (const order of expanded.rows) {
+    await offerBusinessOrderToEligibleRiders(client, order.id, "ALL");
   }
 
   const unassigned = await client.query(
@@ -1094,7 +1100,7 @@ async function getRiderOrderById(orderId: string, riderId?: string) {
             a.address_text AS dropoff_address,
             a.lat AS dropoff_lat,
             a.lng AS dropoff_lng,
-            oo.expires_at AS offer_expires_at
+            CASE WHEN isfinite(oo.expires_at) THEN oo.expires_at ELSE NULL END AS offer_expires_at
      FROM orders o
      JOIN businesses b ON b.id = o.business_id
      LEFT JOIN customers c ON c.id = o.customer_id
@@ -1171,7 +1177,7 @@ async function buildRiderDashboard(riderId: string) {
            a.address_text AS dropoff_address,
            a.lat AS dropoff_lat,
            a.lng AS dropoff_lng,
-           oo.expires_at AS offer_expires_at
+           CASE WHEN isfinite(oo.expires_at) THEN oo.expires_at ELSE NULL END AS offer_expires_at
     FROM orders o
     JOIN businesses b ON b.id = o.business_id
     LEFT JOIN customers c ON c.id = o.customer_id
@@ -1198,6 +1204,7 @@ async function buildRiderDashboard(riderId: string) {
          FROM rider_profiles rp
          WHERE rp.id = $1
            AND rp.is_online = true
+           AND (o.route_distance_meters <= 3000 OR rp.vehicle_type='DIESEL')
        )
      ORDER BY oo.sent_at DESC
      LIMIT 5`,
@@ -1366,17 +1373,17 @@ app.post("/admin/auth/login", async (req, res, next) => {
   try {
     const body = z
       .object({
-        email: z.string().email(),
+        email: z.string().trim().email(),
         password: z.string().min(6),
       })
       .parse(req.body);
     const { rows } = await pool.query(
       `SELECT id, name, email, phone, password_hash, role
        FROM users
-       WHERE email = $1
+       WHERE lower(email) = $1
          AND role::text IN ('SUPERADMIN', 'ADMIN', 'OPERATOR')
          AND status = 'ACTIVE'`,
-      [body.email],
+      [body.email.toLowerCase()],
     );
 
     if (!rows[0] || !verifyPassword(body.password, rows[0].password_hash)) {
@@ -1488,7 +1495,7 @@ app.post("/admin/businesses", async (req, res, next) => {
         name: z.string().min(2),
         legalName: z.string().optional().or(z.literal("")),
         phone: z.string().min(6),
-        email: z.string().email().optional().or(z.literal("")),
+        email: z.string().trim().email(),
         password: z.string().min(6),
         addressText: z.string().min(4),
         googleMapsUrl: businessQuoteSchema.shape.googleMapsUrl,
@@ -1501,7 +1508,7 @@ app.post("/admin/businesses", async (req, res, next) => {
         description: z.string().optional().or(z.literal("")),
       })
       .parse(req.body);
-    const location = await resolveGoogleMapsDestination(body.googleMapsUrl);
+    const location = await resolveGoogleMapsDestination(body.googleMapsUrl, 20000);
 
     await client.query("BEGIN");
 
@@ -1537,7 +1544,7 @@ app.post("/admin/businesses", async (req, res, next) => {
         body.name.trim(),
         body.legalName ?? "",
         body.phone.trim(),
-        body.email ?? "",
+        body.email.trim().toLowerCase(),
         body.addressText.trim(),
         location.lat,
         location.lng,
@@ -1551,13 +1558,14 @@ app.post("/admin/businesses", async (req, res, next) => {
 
     const userResult = await client.query(
       `INSERT INTO users (name, email, phone, password_hash, role, status)
-       VALUES ($1, NULLIF($2, ''), $3, $4, 'BUSINESS', 'ACTIVE')
+       VALUES ($1, $2, $3, $4, 'BUSINESS', $5)
        RETURNING id`,
       [
         body.name.trim(),
-        body.email ?? "",
+        body.email.trim().toLowerCase(),
         body.phone.trim(),
         hashPassword(body.password),
+        body.status ?? "ACTIVE",
       ],
     );
 
@@ -1611,7 +1619,7 @@ app.patch("/admin/businesses/:id", async (req, res, next) => {
         name: z.string().min(2),
         legalName: z.string().optional().or(z.literal("")),
         phone: z.string().min(6),
-        email: z.string().email().optional().or(z.literal("")),
+        email: z.string().trim().email(),
         addressText: z.string().min(4),
         googleMapsUrl: businessQuoteSchema.shape.googleMapsUrl,
         lat: z.number().optional().nullable(),
@@ -1623,7 +1631,7 @@ app.patch("/admin/businesses/:id", async (req, res, next) => {
         description: z.string().optional().or(z.literal("")),
       })
       .parse(req.body);
-    const location = await resolveGoogleMapsDestination(body.googleMapsUrl);
+    const location = await resolveGoogleMapsDestination(body.googleMapsUrl, 20000);
     await client.query("BEGIN");
     const categoryName = body.category?.trim() || "Te tjera";
     await client.query(
@@ -1642,7 +1650,7 @@ app.patch("/admin/businesses/:id", async (req, res, next) => {
         body.name.trim(),
         body.legalName ?? "",
         body.phone.trim(),
-        body.email ?? "",
+        body.email.trim().toLowerCase(),
         body.addressText.trim(),
         location.lat,
         location.lng,
@@ -1661,7 +1669,7 @@ app.patch("/admin/businesses/:id", async (req, res, next) => {
     await client.query(
       `UPDATE users u SET name=$2, email=NULLIF($3,''), phone=$4, status=$5
        FROM business_users bu WHERE bu.business_id=$1 AND bu.user_id=u.id AND bu.is_primary=true`,
-      [id, body.name.trim(), body.email ?? "", body.phone.trim(), body.status],
+      [id, body.name.trim(), body.email.trim().toLowerCase(), body.phone.trim(), body.status],
     );
     const result = await client.query(
       `SELECT b.id, b.name, b.legal_name, b.phone, b.email, b.address_text, b.lat, b.lng,
@@ -1680,6 +1688,22 @@ app.patch("/admin/businesses/:id", async (req, res, next) => {
   } finally {
     client.release();
   }
+});
+
+app.patch("/admin/businesses/:id/password", async (req, res, next) => {
+  try {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { password } = z.object({ password: z.string().min(6) }).parse(req.body);
+    const result = await pool.query(
+      `UPDATE users u SET password_hash=$2, updated_at=now()
+       FROM business_users bu JOIN businesses b ON b.id=bu.business_id
+       WHERE b.id=$1 AND b.deleted_at IS NULL AND bu.user_id=u.id AND bu.is_primary=true
+       RETURNING u.id`,
+      [id, hashPassword(password)],
+    );
+    if (!result.rowCount) { res.status(404).json({ error: "BUSINESS_NOT_FOUND" }); return; }
+    res.json({ ok: true });
+  } catch (error) { next(error); }
 });
 
 app.delete("/admin/businesses/:id", async (req, res, next) => {
@@ -1780,7 +1804,7 @@ app.post("/admin/riders", async (req, res, next) => {
       .object({
         name: z.string().min(2),
         phone: z.string().min(6),
-        email: z.string().email().optional().or(z.literal("")),
+        email: z.string().trim().email(),
         password: z.string().min(6),
         vehicleType: z.enum(["ELECTRIC", "DIESEL"]).optional(),
         licenseNumber: z.string().max(40).optional().or(z.literal("")),
@@ -1793,13 +1817,14 @@ app.post("/admin/riders", async (req, res, next) => {
 
     const userResult = await client.query(
       `INSERT INTO users (name, email, phone, password_hash, role, status)
-       VALUES ($1, NULLIF($2, ''), $3, $4, 'RIDER', 'ACTIVE')
+       VALUES ($1, $2, $3, $4, 'RIDER', $5)
        RETURNING id`,
       [
         body.name.trim(),
-        body.email ?? "",
+        body.email.trim().toLowerCase(),
         body.phone.trim(),
         hashPassword(body.password),
+        body.status ?? "ACTIVE",
       ],
     );
 
@@ -1857,7 +1882,7 @@ app.patch("/admin/riders/:id", async (req, res, next) => {
       .object({
         name: z.string().min(2),
         phone: z.string().min(6),
-        email: z.string().email().optional().or(z.literal("")),
+        email: z.string().trim().email(),
         vehicleType: z.enum(["ELECTRIC", "DIESEL"]),
         licenseNumber: z.string().max(40).optional().or(z.literal("")),
         personalId: z.string().max(80).optional().or(z.literal("")),
@@ -1883,7 +1908,7 @@ app.patch("/admin/riders/:id", async (req, res, next) => {
         updated.rows[0].user_id,
         body.name.trim(),
         body.phone.trim(),
-        body.email ?? "",
+        body.email.trim().toLowerCase(),
         body.status,
       ],
     );
@@ -1904,6 +1929,21 @@ app.patch("/admin/riders/:id", async (req, res, next) => {
   } finally {
     client.release();
   }
+});
+
+app.patch("/admin/riders/:id/password", async (req, res, next) => {
+  try {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { password } = z.object({ password: z.string().min(6) }).parse(req.body);
+    const result = await pool.query(
+      `UPDATE users u SET password_hash=$2, updated_at=now()
+       FROM rider_profiles rp
+       WHERE rp.id=$1 AND rp.deleted_at IS NULL AND rp.user_id=u.id RETURNING u.id`,
+      [id, hashPassword(password)],
+    );
+    if (!result.rowCount) { res.status(404).json({ error: "RIDER_NOT_FOUND" }); return; }
+    res.json({ ok: true });
+  } catch (error) { next(error); }
 });
 
 app.delete("/admin/riders/:id", async (req, res, next) => {
@@ -2128,13 +2168,14 @@ app.get("/admin/live-map", async (_req, res, next) => {
               rp.is_online,
               rp.status,
               rp.last_seen_at,
-              COALESCE(latest.lat, 41.3275) AS last_lat,
-              COALESCE(latest.lng, 19.8187) AS last_lng,
+              latest.lat AS last_lat,
+              latest.lng AS last_lng,
+              latest.accuracy_meters AS gps_accuracy, latest.recorded_at AS gps_recorded_at,
               COUNT(o.id) FILTER (WHERE o.status = 'DELIVERED' AND o.delivered_at >= date_trunc('day', now()))::int AS deliveries_today
        FROM rider_profiles rp
        JOIN users u ON u.id = rp.user_id
        LEFT JOIN LATERAL (
-         SELECT rl.lat, rl.lng
+         SELECT rl.lat, rl.lng, rl.accuracy_meters, rl.recorded_at
          FROM rider_locations rl
          WHERE rl.rider_id = rp.id
          ORDER BY rl.recorded_at DESC
@@ -2142,7 +2183,7 @@ app.get("/admin/live-map", async (_req, res, next) => {
        ) latest ON true
        LEFT JOIN orders o ON o.assigned_rider_id = rp.id
        WHERE rp.status = 'ACTIVE'
-       GROUP BY rp.id, u.id, latest.lat, latest.lng
+       GROUP BY rp.id, u.id, latest.lat, latest.lng, latest.accuracy_meters, latest.recorded_at
        ORDER BY rp.is_online DESC, rp.last_seen_at DESC NULLS LAST
        LIMIT 40`,
     );
@@ -2298,8 +2339,8 @@ app.get("/public/addresses/reverse", async (req, res, next) => {
   try {
     const params = z
       .object({
-        lat: z.coerce.number(),
-        lng: z.coerce.number(),
+        lat: z.coerce.number().min(-90).max(90),
+        lng: z.coerce.number().min(-180).max(180),
       })
       .parse(req.query);
 
@@ -2328,21 +2369,11 @@ app.get("/public/addresses/reverse", async (req, res, next) => {
           return;
         }
       } catch {
-        // Fall through to nearest cached address.
+        // No address is preferable to an unrelated cached street.
       }
     }
 
-    const { rows } = await pool.query(
-      `SELECT id, label, area, city, details, lat, lng
-       FROM address_suggestions
-       ORDER BY ST_Distance(
-         ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography,
-         ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
-       )
-       LIMIT 1`,
-      [params.lat, params.lng],
-    );
-    res.json({ address: rows[0] ? mapAddressRow(rows[0]) : null });
+    res.json({ address: null });
   } catch (error) {
     next(error);
   }
@@ -2400,14 +2431,13 @@ app.post("/businesses/auth/login", async (req, res, next) => {
   try {
     const body = z
       .object({
-        email: z.string().email(),
+        email: z.string().trim().email(),
         password: z.string().min(6),
       })
       .parse(req.body);
     const { rows } = await pool.query(
       `SELECT b.id AS business_id,
               b.name AS business_name,
-           b.category AS business_category,
             b.category AS business_category,
               b.legal_name,
               b.phone,
@@ -2415,22 +2445,28 @@ app.post("/businesses/auth/login", async (req, res, next) => {
               b.status,
               u.id AS user_id,
               u.name AS user_name,
+              u.status AS user_status,
               u.password_hash
        FROM users u
        JOIN business_users bu ON bu.user_id = u.id
        JOIN businesses b ON b.id = bu.business_id
        WHERE u.role = 'BUSINESS'
-         AND u.status = 'ACTIVE'
-         AND b.status = 'ACTIVE'
+         AND b.deleted_at IS NULL
          AND b.id <> ALL($2::uuid[])
-         AND (u.email = $1 OR b.email = $1)
+         AND (lower(u.email) = $1 OR lower(b.email) = $1)
        ORDER BY bu.is_primary DESC
        LIMIT 1`,
-      [body.email, sampleBusinessIds],
+      [body.email.trim().toLowerCase(), sampleBusinessIds],
     );
 
     if (!rows[0] || !verifyPassword(body.password, rows[0].password_hash)) {
       res.status(401).json({ error: "INVALID_BUSINESS_LOGIN" });
+      return;
+    }
+
+    if (rows[0].status !== "ACTIVE" || rows[0].user_status !== "ACTIVE") {
+      const suspended = rows[0].status === "SUSPENDED" || rows[0].user_status === "SUSPENDED";
+      res.status(403).json({ error: suspended ? "BUSINESS_SUSPENDED" : "BUSINESS_INACTIVE" });
       return;
     }
 
@@ -2443,7 +2479,7 @@ app.post("/businesses/auth/login", async (req, res, next) => {
 app.post("/riders/auth/login", async (req, res, next) => {
   try {
     const body = z
-      .object({ email: z.string().email(), password: z.string().min(4) })
+      .object({ email: z.string().trim().email(), password: z.string().min(4) })
       .parse(req.body);
     const { rows } = await pool.query(
       `SELECT rp.id,
@@ -2451,6 +2487,7 @@ app.post("/riders/auth/login", async (req, res, next) => {
               u.name,
               u.phone,
               u.password_hash,
+              u.status AS user_status,
               rp.vehicle_type,
               rp.license_number,
               rp.is_online,
@@ -2458,14 +2495,20 @@ app.post("/riders/auth/login", async (req, res, next) => {
               rp.last_seen_at
        FROM users u
        JOIN rider_profiles rp ON rp.user_id = u.id
-       WHERE u.email = $1
+       WHERE lower(u.email) = $1
          AND u.role = 'RIDER'
-         AND u.status = 'ACTIVE'`,
-      [body.email],
+         AND rp.deleted_at IS NULL`,
+      [body.email.trim().toLowerCase()],
     );
 
     if (!rows[0] || !verifyPassword(body.password, rows[0].password_hash)) {
       res.status(401).json({ error: "INVALID_RIDER_LOGIN" });
+      return;
+    }
+
+    if (rows[0].status !== "ACTIVE" || rows[0].user_status !== "ACTIVE") {
+      const suspended = rows[0].status === "SUSPENDED" || rows[0].user_status === "SUSPENDED";
+      res.status(403).json({ error: suspended ? "RIDER_SUSPENDED" : "RIDER_INACTIVE" });
       return;
     }
 
@@ -2916,7 +2959,7 @@ app.get("/businesses/:id/dashboard", async (req, res, next) => {
               c.phone AS customer_phone,
               a.address_text AS delivery_address,
               u.name AS rider_name,
-              COUNT(oo.id) FILTER (WHERE oo.status = 'PENDING')::int AS offered_rider_count
+              COUNT(oo.id)::int AS offered_rider_count
        FROM orders o
        LEFT JOIN customers c ON c.id = o.customer_id
        JOIN addresses a ON a.id = o.delivery_address_id
@@ -3002,7 +3045,7 @@ app.post("/businesses/:id/orders/quote", orderingHours, async (req, res, next) =
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = businessQuoteSchema.parse(req.body);
 
-    const mapsLocation = await resolveGoogleMapsDestination(body.googleMapsUrl);
+    const mapsLocation = await resolveGoogleMapsDestination(body.googleMapsUrl, 20000);
     const deliveryLat = mapsLocation.lat, deliveryLng = mapsLocation.lng;
     const quote = await calculateBusinessTransportQuote(client, {
       businessId: params.id,
@@ -3036,7 +3079,7 @@ async function createBusinessOrder(req: express.Request, res: express.Response, 
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = businessOrderSchema.parse(req.body);
 
-    const mapsLocation = await resolveGoogleMapsDestination(body.googleMapsUrl);
+    const mapsLocation = await resolveGoogleMapsDestination(body.googleMapsUrl, 20000);
     const deliveryLat = mapsLocation.lat, deliveryLng = mapsLocation.lng;
     const addressText = mapsLocation.addressText;
 
@@ -3617,7 +3660,8 @@ app.get("/admin/orders", requireAdmin, async (req, res, next) => {
     const count = await pool.query(`SELECT COUNT(*)::int AS total FROM orders o
       JOIN businesses b ON b.id=o.business_id LEFT JOIN customers c ON c.id=o.customer_id
       WHERE ${where}`, params);
-    const result = await pool.query(`SELECT o.id,o.code,o.status,o.created_at,o.product_value,
+    const result = await pool.query(`SELECT o.id,o.code,o.status,o.created_at,o.escalated_at,o.assigned_rider_id,o.product_value,o.route_distance_meters,
+      (o.escalated_at <= now()-interval '60 seconds') AS manual_assignment_ready,
       o.transport_fee,o.total_amount,o.rider_earning,o.business_id,b.name AS business_name,
       c.name AS customer_name,a.address_text AS dropoff_address
       FROM orders o JOIN businesses b ON b.id=o.business_id
@@ -3627,12 +3671,75 @@ app.get("/admin/orders", requireAdmin, async (req, res, next) => {
       [...params, (query.page - 1) * 50]);
     res.json({ total: count.rows[0].total, page: query.page, orders: result.rows.map(row => ({
       id: row.id, code: row.code, status: row.status, createdAt: row.created_at,
+      escalatedAt: row.escalated_at, assignedRiderId: row.assigned_rider_id,
+      manualAssignmentReady: row.manual_assignment_ready === true,
+      routeDistanceMeters: Number(row.route_distance_meters),
       productValue: Number(row.product_value), transportFee: Number(row.transport_fee),
       totalAmount: Number(row.total_amount), riderEarning: Number(row.rider_earning),
       businessId: row.business_id, businessName: row.business_name,
       customerName: row.customer_name, dropoffAddress: row.dropoff_address,
     })) });
   } catch (error) { next(error); }
+});
+
+app.post("/admin/orders/:id/assign", requireAdmin, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { riderId } = z.object({ riderId: z.string().uuid() }).parse(req.body);
+    await client.query("BEGIN");
+    const rider = await client.query(
+      "SELECT id FROM rider_profiles WHERE id=$1 AND deleted_at IS NULL FOR UPDATE",
+      [riderId],
+    );
+    if (!rider.rowCount) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "RIDER_NOT_FOUND" });
+      return;
+    }
+    const result = await client.query(
+      "SELECT id, business_id, status, escalated_at, assigned_rider_id, (escalated_at <= now()-interval '60 seconds') AS manual_assignment_ready FROM orders WHERE id=$1",
+      [id],
+    );
+    const order = result.rows[0];
+    if (!order) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "ORDER_NOT_FOUND" });
+      return;
+    }
+    if (order.status !== "OFFERED" || order.assigned_rider_id || !order.manual_assignment_ready) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "MANUAL_ASSIGNMENT_NOT_AVAILABLE" });
+      return;
+    }
+    await assertRiderEligible(client, riderId, id, googleMapsApiKey);
+    await client.query(
+      `INSERT INTO order_offers(order_id, rider_id, status, expires_at)
+       VALUES($1,$2,'PENDING',now()+interval '5 minutes')
+       ON CONFLICT(order_id,rider_id) DO UPDATE
+       SET status='PENDING',sent_at=now(),responded_at=NULL,expires_at=EXCLUDED.expires_at`,
+      [id, riderId],
+    );
+    await client.query("SELECT * FROM accept_order_atomic($1,$2)", [id, riderId]);
+    await client.query(
+      "UPDATE order_status_history SET note='Assigned by admin after escalation' WHERE id=(SELECT id FROM order_status_history WHERE order_id=$1 AND to_status='ACCEPTED' ORDER BY created_at DESC,id DESC LIMIT 1)",
+      [id],
+    );
+    await client.query(
+      "UPDATE notifications SET status='CLOSED' WHERE order_id=$1 AND type='ORDER_UNASSIGNED_AFTER_ESCALATION' AND status IN ('PENDING','SENT')",
+      [id],
+    );
+    await client.query("COMMIT");
+    io.to("admin").emit("order.accepted", { orderId: id, riderId });
+    io.to(`rider:${riderId}`).emit("order.accepted", { orderId: id, riderId });
+    io.to(`business:${order.business_id}`).emit("order.accepted", { orderId: id, riderId });
+    res.json({ ok: true, orderId: id, riderId });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
 });
 
 app.get("/admin/businesses/:id/orders", requireAdmin, async(req,res,next)=>{
@@ -3849,8 +3956,9 @@ app.post("/riders/me/location", async (req, res, next) => {
       .object({
         riderId: z.string().uuid(),
         orderId: z.string().uuid().nullable().optional(),
-        lat: z.number(),
-        lng: z.number(),
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180),
+        accuracy: z.number().finite().min(0).optional(),
         speed: z.number().optional(),
         heading: z.number().optional(),
       })
@@ -3881,8 +3989,8 @@ app.post("/riders/me/location", async (req, res, next) => {
     }
 
     await pool.query(
-      `INSERT INTO rider_locations (rider_id, order_id, point, lat, lng, speed, heading)
-       VALUES ($1, $2, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $3, $4, $5, $6)`,
+      `INSERT INTO rider_locations (rider_id, order_id, point, lat, lng, speed, heading, accuracy_meters)
+       VALUES ($1, $2, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $3, $4, $5, $6, $7)`,
       [
         body.riderId,
         body.orderId ?? null,
@@ -3890,6 +3998,7 @@ app.post("/riders/me/location", async (req, res, next) => {
         body.lng,
         body.speed ?? null,
         body.heading ?? null,
+        body.accuracy ?? null,
       ],
     );
 
@@ -3917,6 +4026,8 @@ app.use(
       error.code === "23505"
     ) {
       const constraint = "constraint" in error ? String(error.constraint) : "";
+      if (constraint === "users_email_key") { res.status(409).json({error:"USER_EMAIL_EXISTS"}); return; }
+      if (constraint === "users_phone_key") { res.status(409).json({error:"USER_PHONE_EXISTS"}); return; }
       if (constraint.includes("customer_accounts_phone")) {
         res.status(409).json({ error: "CUSTOMER_PHONE_EXISTS" });
         return;

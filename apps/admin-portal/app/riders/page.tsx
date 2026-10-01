@@ -20,6 +20,7 @@ import {
   deleteAdminRider,
   formatLek,
   getAdminRiders,
+  resetAdminRiderPassword,
   setRiderAccountBalance,
   updateAdminRider,
   ApiError,
@@ -124,6 +125,7 @@ export default function RidersPage() {
       if (editingId) {
         const { password: _password, ...updateInput } = input;
         await updateAdminRider(editingId, updateInput);
+        if (_password) await resetAdminRiderPassword(editingId, _password);
       } else {
         await createAdminRider(input);
       }
@@ -294,6 +296,7 @@ export default function RidersPage() {
                 }
                 placeholder="motorist@example.com"
                 type="email"
+                required
                 value={form.email}
               />
             </Field>

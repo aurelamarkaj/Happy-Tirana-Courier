@@ -4,7 +4,7 @@ import { ArrowRight, LockKeyhole, Mail, Store } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-import { loginBusiness } from "../../lib/api";
+import { BusinessApiError, loginBusiness } from "../../lib/api";
 
 export default function BusinessLoginPage() {
   const router = useRouter();
@@ -32,8 +32,12 @@ export default function BusinessLoginPage() {
     try {
       await loginBusiness({ email, password });
       router.replace("/");
-    } catch {
-      setMessage("Hyrja nuk u krye. Kontrollo email-in dhe fjalëkalimin.");
+    } catch (error) {
+      setMessage(error instanceof BusinessApiError && error.code === "BUSINESS_SUSPENDED"
+        ? "Biznesi është i pezulluar dhe nuk mund të hyjë tani. Kontakto administratorin."
+        : error instanceof BusinessApiError && error.code === "BUSINESS_INACTIVE"
+          ? "Biznesi është joaktiv dhe nuk mund të hyjë tani. Kontakto administratorin për aktivizim."
+          : "Hyrja nuk u krye. Kontrollo email-in dhe fjalëkalimin.");
     } finally {
       setSubmitting(false);
     }

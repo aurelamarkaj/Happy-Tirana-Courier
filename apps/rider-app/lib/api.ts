@@ -225,6 +225,7 @@ export async function updateOrderStatus(
 export async function sendRiderLocation(
   input: RoutePoint & {
     orderId?: string | null;
+    accuracy?: number;
     speed?: number;
     heading?: number;
   },
@@ -238,6 +239,7 @@ export async function sendRiderLocation(
       orderId: input.orderId ?? null,
       lat: input.lat,
       lng: input.lng,
+      accuracy: input.accuracy,
       speed: input.speed,
       heading: input.heading,
     }),

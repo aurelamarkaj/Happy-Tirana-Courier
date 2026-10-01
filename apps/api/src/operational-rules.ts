@@ -1,6 +1,7 @@
 export const MAX_ACTIVE_ORDERS = 2;
 export const SECOND_ORDER_MAX_DISTANCE_METERS = 500;
 export const MAX_PLATFORM_DEBIT = 5000;
+export const FIRST_OFFER_DELAY_MINUTES = 8;
 export const OFFER_ESCALATION_SECONDS = 60;
 export const ADMIN_ALERT_DELAY_SECONDS = 60;
 
@@ -27,7 +28,7 @@ export function assertOrderingOpen(now = new Date()) {
   if (!getOrderWindow(now).isOpen) throw new Error("ORDERING_CLOSED");
 }
 export function firstOfferDelayMinutes(readyMinutes: number) {
-  return readyMinutes > 10 ? readyMinutes - 1 : 9;
+  return FIRST_OFFER_DELAY_MINUTES;
 }
 export function debitLimit() {
   const value = Number(process.env.RIDER_DEBIT_LIMIT_ALL ?? MAX_PLATFORM_DEBIT);
