@@ -22,6 +22,7 @@ import {
   getAdminRiders,
   resetAdminRiderPassword,
   setRiderAccountBalance,
+  setRiderDebit,
   updateAdminRider,
   ApiError,
   type AdminRider,
@@ -63,6 +64,8 @@ export default function RidersPage() {
   const [fleetFilter, setFleetFilter] = useState("ALL");
   const [payoutRider, setPayoutRider] = useState<AdminRider | null>(null);
   const [remainingBalance, setRemainingBalance] = useState("");
+  const [debitRider,setDebitRider]=useState<AdminRider|null>(null);
+  const [newDebit,setNewDebit]=useState("");
   const filteredRiders = riders.filter(
     (rider) =>
       (fleetFilter === "ALL" ||
@@ -184,6 +187,17 @@ export default function RidersPage() {
     } finally {
       setDeletingId(null);
     }
+  }
+
+  async function recordDebit(event:FormEvent<HTMLFormElement>){
+    event.preventDefault();
+    if(!debitRider || saving)return;
+    const debit=Number(newDebit);
+    if(newDebit.trim()==='' || !Number.isFinite(debit) || debit<0 || debit>debitRider.platformDue){setMessage('Debiti i ri duhet të jetë nga 0 deri te debiti aktual.');return;}
+    setSaving(true);
+    try{await setRiderDebit(debitRider.id,debit);setDebitRider(null);await loadRiders();setMessage(`Debiti u ndryshua në ${formatLek(debit)}.`);}
+    catch{setMessage('Debiti nuk u ndryshua. Rifresko gjendjen; nuk lejohet vlerë më e madhe se debiti aktual.');}
+    finally{setSaving(false);}
   }
 
   async function recordPayout(event: FormEvent<HTMLFormElement>) {
@@ -494,6 +508,7 @@ export default function RidersPage() {
                   setRemainingBalance(String(Math.min(rider.accountBalanceAll, 5000)));
                   setMessage("");
                 }}>Regjistro tërheqje</button>
+                <button className="secondary-button" type="button" onClick={()=>{setDebitRider(rider);setNewDebit(String(rider.platformDue));setPayoutRider(null);setMessage('');}}>Ndrysho debitin</button>
                 <button
                   aria-label={`Ndrysho ${rider.name}`}
                   className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 text-white/70 hover:border-happy-orange/50 hover:text-happy-orange"
@@ -530,6 +545,15 @@ export default function RidersPage() {
           ))}
         </div>
       </section>
+      {debitRider && <section className="admin-panel rounded-2xl border p-5">
+        <h2 className="type-section-title">Debiti i {debitRider.name}</h2>
+        <p className="type-secondary mt-2">Debiti aktual: {formatLek(debitRider.platformDue)}. Vendos debitin që mbetet. Fitimet për tërheqje nuk ndryshojnë.</p>
+        <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={recordDebit}>
+          <Field label="Debiti i ri (ALL)"><input className="admin-input h-11 rounded-xl border px-3" type="number" min="0" max={debitRider.platformDue} step="0.01" required value={newDebit} onChange={event=>setNewDebit(event.target.value)}/></Field>
+          <button className="primary-button" disabled={saving} type="submit">Ruaj debitin</button>
+          <button className="secondary-button" disabled={saving} type="button" onClick={()=>setDebitRider(null)}>Mbyll</button>
+        </form>
+      </section>}
       {payoutRider && <section className="admin-panel rounded-2xl border p-5">
         <h2 className="type-section-title">Tërheqja e {payoutRider.name}</h2>
         <p className="type-secondary mt-2">Gjendja aktuale: {formatLek(payoutRider.accountBalanceAll)}. Vendos gjendjen që mbetet pas tërheqjes.</p>

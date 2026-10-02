@@ -118,6 +118,7 @@ export default function LoginPage() {
             {submitting ? "Po hyn..." : "Hyr"}
             <ArrowRight className="ml-2 h-5 w-5" />
           </button>
+          <p className="mt-4 text-center"><Link className="font-semibold text-happy-orange" href="/forgot-password">Ke harruar fjalëkalimin? Ndrysho fjalëkalimin</Link></p>
           <p className="type-secondary mt-4 text-center text-white/50">
             Nuk ke akses?{" "}
             <Link className="font-semibold text-happy-orange" href="/signup">

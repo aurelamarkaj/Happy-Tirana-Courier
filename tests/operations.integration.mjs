@@ -33,7 +33,7 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
     }
     db=new pg.Client({connectionString:url.href});await db.connect();
     await t.test("fresh migrations and repeat run",async()=>{
-      assert.equal((await db.query("SELECT count(*)::int AS n FROM schema_migrations")).rows[0].n,21);
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM schema_migrations")).rows[0].n,23);
       const boundary=(await db.query(`SELECT ST_IsValid(z.polygon) AS valid,
         ST_NPoints(z.polygon) AS vertex_count,
         ST_Covers(z.polygon, ST_SetSRID(ST_MakePoint(19.7779923,41.3391526),4326)) AS mezez_inside,
@@ -533,6 +533,24 @@ test("operational rules against real PostgreSQL, HTTP and Socket.IO", async t =>
       assert.equal((await request(`/admin/riders/${id}`,undefined,"DELETE")).status,404);
       assert.equal((await request("/admin/riders",input)).status,201,"deleted rider contact must be reusable");
     });
+    await t.test("admin debit reduction: bounds, ledger preservation, repeat and authorization",async()=>{
+      const user=(await db.query("INSERT INTO users(name,email,password_hash,role) VALUES('Debit QA','debit-qa@example.invalid',$1,'RIDER') RETURNING id",[passwordHash])).rows[0].id;
+      const id=(await db.query("INSERT INTO rider_profiles(user_id,vehicle_type,account_balance_all) VALUES($1,'DIESEL',777) RETURNING id",[user])).rows[0].id;
+      await db.query("INSERT INTO ledger_entries(rider_id,entry_type,amount,direction) VALUES($1,'TEST',180,'RIDER_OWES_PLATFORM')",[id]);
+      const path=`/admin/riders/${id}/debit`;
+      assert.equal((await request(path,{debit:100},'PATCH',null)).status,401);
+      assert.equal((await request(path,{debit:-1},'PATCH')).status,422);
+      assert.equal((await request(path,{debit:180.01},'PATCH')).status,409);
+      assert.equal((await request(path,{debit:100.25},'PATCH')).status,200);
+      assert.equal((await request(path,{debit:100.25},'PATCH')).status,200);
+      assert.equal((await request(path,{debit:180},'PATCH')).status,409);
+      assert.equal(Number((await db.query("SELECT sum(amount) n FROM ledger_entries WHERE rider_id=$1",[id])).rows[0].n),180);
+      assert.equal(Number((await db.query("SELECT account_balance_all n FROM rider_profiles WHERE id=$1",[id])).rows[0].n),777);
+      assert.equal((await request(path,{debit:0},'PATCH')).status,200);
+      assert.equal(Number((await db.query("SELECT coalesce(sum(amount),0) n FROM ledger_entries WHERE rider_id=$1 AND status='OPEN' AND direction='RIDER_OWES_PLATFORM'",[id])).rows[0].n),0);
+      assert.equal((await db.query('SELECT count(*)::int n FROM rider_debit_adjustments WHERE rider_id=$1',[id])).rows[0].n,2);
+    });
+    await (await import("./password-reset.integration-helper.mjs")).testPasswordReset({t,api,db,request});
     if(process.env.QA_AUDIT === "1") await (await import("./preproduction-audit.mjs")).audit({t,request,db,base,realFetch,business,nearbyBusiness,payload,adminToken,api,create,dispatch});
   } finally {
     globalThis.fetch=realFetch;globalThis.Date=RealDate;

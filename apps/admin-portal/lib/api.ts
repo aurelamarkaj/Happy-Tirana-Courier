@@ -394,6 +394,9 @@ export async function getAdminBusinessOrders(id: string) {
   return apiFetch<{business: {id:string;name:string;category:string|null};orders:AdminBusinessOrder[]}>(`/admin/businesses/${id}/orders`);
 }
 
+export async function setRiderDebit(id:string,debit:number){
+ return apiFetch<{debit:number;reduction:number}>(`/admin/riders/${id}/debit`,{method:"PATCH",body:JSON.stringify({debit})});
+}
 export async function setRiderAccountBalance(id:string,balance:number){
  return apiFetch<{balance:number;withdrawal:number}>(`/admin/riders/${id}/account-balance`,{
   method:"PATCH",body:JSON.stringify({balance})

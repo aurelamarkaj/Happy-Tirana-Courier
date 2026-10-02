@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { registerPasswordReset } from "./password-reset.js";
 import { pathToFileURL } from "node:url";
 import { resolveGoogleMapsDestination } from "./maps-location.js";
 import { assertRiderEligible } from "./rider-eligibility.js";
@@ -29,6 +30,8 @@ dotenv.config({
 const { pool } = await import("@happy-tirana/db");
 
 const app = express();
+// The API is behind the single nginx proxy on the private Docker network.
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
   .split(",")
@@ -249,6 +252,16 @@ async function calculateBusinessTransportQuote(
 ) {
   return calculateQuote(client, googleMapsApiKey, input);
 }
+
+
+async function revokeUserSessions(userId: string) {
+  const riders=await pool.query('SELECT id FROM rider_profiles WHERE user_id=$1',[userId]);
+  const businesses=await pool.query('SELECT business_id FROM business_users WHERE user_id=$1',[userId]);
+  for(const row of riders.rows) io.in('rider:'+row.id).disconnectSockets(true);
+  for(const row of businesses.rows) io.in('business:'+row.business_id).disconnectSockets(true);
+  io.in('user:'+userId).disconnectSockets(true);
+}
+registerPasswordReset(app,pool,hashPassword,revokeUserSessions);
 
 function mapCustomer(row: Record<string, unknown>) {
   return {
@@ -569,25 +582,25 @@ function mapAdminRider(row: Record<string, unknown>) {
   };
 }
 
-function signAdminToken(id: string) {
+function signAdminToken(id: string, version = 0) {
   const expires = Math.floor(Date.now()/1000)+12*3600;
-  const payload = `${id}.${expires}`;
+  const payload = `${id}.${expires}${version ? `.${version}` : ""}`;
   const signature = crypto.createHmac("sha256", process.env.JWT_SECRET ?? "").update(payload).digest("hex");
-  return `${payload}.${signature}`;
+  return `${id}.${expires}.${signature}${version ? `.${version}` : ""}`;
 }
 type AccountRole = "BUSINESS" | "RIDER";
-function signAccountToken(id: string, role: AccountRole) {
+function signAccountToken(id: string, role: AccountRole, version = 0) {
   const expires = Math.floor(Date.now() / 1000) + 12 * 3600;
-  const payload = `${role}:${id}.${expires}`;
+  const payload = `${role}:${id}.${expires}${version ? `.${version}` : ""}`;
   const signature = crypto.createHmac("sha256", process.env.JWT_SECRET ?? "").update(payload).digest("hex");
-  return `${id}.${expires}.${signature}`;
+  return `${id}.${expires}.${signature}${version ? `.${version}` : ""}`;
 }
 function accountTokenId(token: string, role: AccountRole) {
-  const [id, expiry, signature] = token.split(".");
+  const [id, expiry, signature, version] = token.split(".");
   if (!z.string().uuid().safeParse(id).success || !expiry || !signature ||
       !Number.isInteger(Number(expiry)) || Number(expiry) < Date.now() / 1000) return null;
   const expected = crypto.createHmac("sha256", process.env.JWT_SECRET ?? "")
-    .update(`${role}:${id}.${expiry}`).digest("hex");
+    .update(`${role}:${id}.${expiry}${version ? `.${version}` : ""}`).digest("hex");
   if (signature.length !== expected.length ||
       !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
   return id;
@@ -598,7 +611,7 @@ async function requireBusiness(req: express.Request, res: express.Response, next
     if (!id || req.path.split("/")[1] !== id) throw new Error("BUSINESS_AUTH_REQUIRED");
     const account = await pool.query(`SELECT 1 FROM businesses b JOIN business_users bu ON bu.business_id=b.id
       JOIN users u ON u.id=bu.user_id WHERE b.id=$1 AND b.status='ACTIVE'
-      AND u.role='BUSINESS' AND u.status='ACTIVE' LIMIT 1`, [id]);
+      AND u.role='BUSINESS' AND u.status='ACTIVE' AND u.session_version=$2 LIMIT 1`, [id, Number(req.header("authorization")?.split(".")[3] ?? 0)]);
     if (!account.rowCount) throw new Error("BUSINESS_AUTH_REQUIRED");
     next();
   } catch { res.status(401).json({ error: "BUSINESS_AUTH_REQUIRED" }); }
@@ -611,7 +624,7 @@ async function requireRider(req: express.Request, res: express.Response, next: e
       req.path === "/me/location" ? req.body?.riderId : req.path.split("/")[1];
     if (target !== id) throw new Error("RIDER_AUTH_REQUIRED");
     const account = await pool.query(`SELECT 1 FROM rider_profiles rp JOIN users u ON u.id=rp.user_id
-      WHERE rp.id=$1 AND rp.status='ACTIVE' AND u.role='RIDER' AND u.status='ACTIVE'`, [id]);
+      WHERE rp.id=$1 AND rp.status='ACTIVE' AND u.role='RIDER' AND u.status='ACTIVE' AND u.session_version=$2`, [id, Number(req.header("authorization")?.split(".")[3] ?? 0)]);
     if (!account.rowCount) throw new Error("RIDER_AUTH_REQUIRED");
     next();
   } catch { res.status(401).json({ error: "RIDER_AUTH_REQUIRED" }); }
@@ -619,11 +632,11 @@ async function requireRider(req: express.Request, res: express.Response, next: e
 async function requireAdmin(req: express.Request,res: express.Response,next: express.NextFunction) {
   try {
     const token = req.header("authorization")?.replace(/^Bearer /i,"") ?? "";
-    const [id,expiry,signature] = token.split(".");
+    const [id,expiry,signature,version] = token.split(".");
     if (!id || !expiry || !signature || Number(expiry)<Date.now()/1000) throw new Error("ADMIN_AUTH_REQUIRED");
-    const expected=crypto.createHmac("sha256",process.env.JWT_SECRET ?? "").update(`${id}.${expiry}`).digest("hex");
+    const expected=crypto.createHmac("sha256",process.env.JWT_SECRET ?? "").update(`${id}.${expiry}${version ? `.${version}` : ""}`).digest("hex");
     if (signature.length!==expected.length || !crypto.timingSafeEqual(Buffer.from(signature),Buffer.from(expected))) throw new Error("ADMIN_AUTH_REQUIRED");
-    const admin=await pool.query("SELECT id FROM users WHERE id=$1 AND status='ACTIVE' AND role::text IN ('SUPERADMIN','ADMIN','OPERATOR')",[id]);
+    const admin=await pool.query("SELECT id FROM users WHERE id=$1 AND status='ACTIVE' AND role::text IN ('SUPERADMIN','ADMIN','OPERATOR') AND session_version=$2",[id,Number(version ?? 0)]);
     if (!admin.rowCount) throw new Error("ADMIN_AUTH_REQUIRED");
     next();
   } catch {res.status(401).json({error:"ADMIN_AUTH_REQUIRED"});}
@@ -636,7 +649,7 @@ function mapAdminSession(row: Record<string, unknown>) {
     email: row.email,
     phone: row.phone,
     role: row.role,
-    token: signAdminToken(String(row.id)),
+    token: signAdminToken(String(row.id),Number(row.session_version ?? 0)),
   };
 }
 
@@ -645,7 +658,7 @@ io.on("connection", (socket) => {
     const id = typeof token === "string" ? accountTokenId(token, "RIDER") : null;
     if (!id) { ack?.(false); return; }
     const account = await pool.query(`SELECT 1 FROM rider_profiles rp JOIN users u ON u.id=rp.user_id
-      WHERE rp.id=$1 AND rp.status='ACTIVE' AND u.status='ACTIVE'`, [id]);
+      WHERE rp.id=$1 AND rp.status='ACTIVE' AND u.status='ACTIVE' AND u.session_version=$2`, [id,Number(String(token).split(".")[3] ?? 0)]);
     if (account.rowCount) { await socket.join(`rider:${id}`); ack?.(true); }
     else ack?.(false);
   });
@@ -653,19 +666,19 @@ io.on("connection", (socket) => {
     const id = typeof token === "string" ? accountTokenId(token, "BUSINESS") : null;
     if (!id) { ack?.(false); return; }
     const account = await pool.query(`SELECT 1 FROM businesses b JOIN business_users bu ON bu.business_id=b.id
-      JOIN users u ON u.id=bu.user_id WHERE b.id=$1 AND b.status='ACTIVE' AND u.status='ACTIVE' LIMIT 1`, [id]);
+      JOIN users u ON u.id=bu.user_id WHERE b.id=$1 AND b.status='ACTIVE' AND u.status='ACTIVE' AND u.session_version=$2 LIMIT 1`, [id,Number(String(token).split(".")[3] ?? 0)]);
     if (account.rowCount) { await socket.join(`business:${id}`); ack?.(true); }
     else ack?.(false);
   });
   socket.on("admin.join", async (token: unknown, ack?: (ok:boolean)=>void) => {
     if (typeof token !== "string") return;
-    const [id, expiry, signature] = token.split(".");
+    const [id, expiry, signature, version] = token.split(".");
     if (!z.string().uuid().safeParse(id).success || !expiry || !signature || Number(expiry) < Date.now()/1000) return;
-    const expected = crypto.createHmac("sha256", process.env.JWT_SECRET ?? "").update(`${id}.${expiry}`).digest("hex");
+    const expected = crypto.createHmac("sha256", process.env.JWT_SECRET ?? "").update(`${id}.${expiry}${version ? `.${version}` : ""}`).digest("hex");
     if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return;
     try {
-      const admin = await pool.query("SELECT id FROM users WHERE id=$1 AND status='ACTIVE' AND role::text IN ('SUPERADMIN','ADMIN','OPERATOR')", [id]);
-      if (admin.rowCount) { await socket.join("admin"); ack?.(true); }
+      const admin = await pool.query("SELECT id FROM users WHERE id=$1 AND status='ACTIVE' AND role::text IN ('SUPERADMIN','ADMIN','OPERATOR') AND session_version=$2", [id,Number(version ?? 0)]);
+      if (admin.rowCount) { await socket.join("admin"); await socket.join(`user:${id}`); ack?.(true); }
       else ack?.(false);
     } catch { /* Reconnect will retry when the database is available. */ }
   });
@@ -1378,7 +1391,7 @@ app.post("/admin/auth/login", async (req, res, next) => {
       })
       .parse(req.body);
     const { rows } = await pool.query(
-      `SELECT id, name, email, phone, password_hash, role
+      `SELECT id, name, email, phone, password_hash, role, session_version
        FROM users
        WHERE lower(email) = $1
          AND role::text IN ('SUPERADMIN', 'ADMIN', 'OPERATOR')
@@ -1702,6 +1715,7 @@ app.patch("/admin/businesses/:id/password", async (req, res, next) => {
       [id, hashPassword(password)],
     );
     if (!result.rowCount) { res.status(404).json({ error: "BUSINESS_NOT_FOUND" }); return; }
+    await revokeUserSessions(result.rows[0].id);
     res.json({ ok: true });
   } catch (error) { next(error); }
 });
@@ -1942,6 +1956,7 @@ app.patch("/admin/riders/:id/password", async (req, res, next) => {
       [id, hashPassword(password)],
     );
     if (!result.rowCount) { res.status(404).json({ error: "RIDER_NOT_FOUND" }); return; }
+    await revokeUserSessions(result.rows[0].id);
     res.json({ ok: true });
   } catch (error) { next(error); }
 });
@@ -2009,6 +2024,37 @@ app.patch("/admin/riders/:id/account-balance",requireAdmin,async(req,res,next)=>
   io.to(`rider:${id}`).emit("rider.balance_changed",{balance});
   res.json({balance,withdrawal});
  }catch(e){await client.query("ROLLBACK");next(e);}finally{client.release();}
+});
+
+app.patch("/admin/riders/:id/debit", requireAdmin, async (req,res,next)=>{
+ const client=await pool.connect();
+ try {
+  const {id}=z.object({id:z.string().uuid()}).parse(req.params);
+  const {debit}=z.object({debit:z.number().finite().min(0).max(99999999.99).multipleOf(0.01)}).parse(req.body);
+  await client.query('BEGIN');
+  const rider=await client.query('SELECT id FROM rider_profiles WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',[id]);
+  if(!rider.rowCount){await client.query('ROLLBACK');res.status(404).json({error:'RIDER_NOT_FOUND'});return;}
+  const entries=await client.query("SELECT * FROM ledger_entries WHERE rider_id=$1 AND direction='RIDER_OWES_PLATFORM' AND status='OPEN' ORDER BY created_at,id FOR UPDATE",[id]);
+  const current=entries.rows.reduce((sum,row)=>sum+Math.round(Number(row.amount)*100),0);
+  const target=Math.round(debit*100);
+  if(target>current){await client.query('ROLLBACK');res.status(409).json({error:'DEBIT_CAN_ONLY_DECREASE',currentDebit:current/100});return;}
+  let remaining=current-target;
+  for(const entry of entries.rows){
+   if(!remaining)break;
+   const cents=Math.round(Number(entry.amount)*100),paid=Math.min(cents,remaining);
+   if(paid===cents)await client.query("UPDATE ledger_entries SET status='PAID' WHERE id=$1",[entry.id]);
+   else{
+    await client.query('UPDATE ledger_entries SET amount=$2 WHERE id=$1',[entry.id,(cents-paid)/100]);
+    await client.query("INSERT INTO ledger_entries(order_id,rider_id,business_id,entry_type,amount,direction,status) VALUES($1,$2,$3,'ADMIN_DEBIT_REDUCTION',$4,'RIDER_OWES_PLATFORM','PAID')",[entry.order_id,id,entry.business_id,paid/100]);
+   }
+   remaining-=paid;
+  }
+  if(current!==target)await client.query('INSERT INTO rider_debit_adjustments(rider_id,admin_id,previous_amount,new_amount) VALUES($1,$2,$3,$4)',[id,req.header('authorization')!.replace(/^Bearer /i,'').split('.')[0],current/100,debit]);
+  await client.query('COMMIT');
+  io.to('admin').emit('rider.balance_changed',{riderId:id,platformDue:debit});
+  io.to(`rider:${id}`).emit('rider.balance_changed',{platformDue:debit});
+  res.json({debit,reduction:(current-target)/100});
+ }catch(error){await client.query('ROLLBACK');next(error);}finally{client.release();}
 });
 
 app.get("/admin/zones", async (_req, res, next) => {
@@ -2446,7 +2492,7 @@ app.post("/businesses/auth/login", async (req, res, next) => {
               u.id AS user_id,
               u.name AS user_name,
               u.status AS user_status,
-              u.password_hash
+              u.session_version, u.password_hash
        FROM users u
        JOIN business_users bu ON bu.user_id = u.id
        JOIN businesses b ON b.id = bu.business_id
@@ -2470,7 +2516,7 @@ app.post("/businesses/auth/login", async (req, res, next) => {
       return;
     }
 
-    res.json({ business: { ...mapBusinessSession(rows[0]), token: signAccountToken(String(rows[0].business_id), "BUSINESS") } });
+    res.json({ business: { ...mapBusinessSession(rows[0]), token: signAccountToken(String(rows[0].business_id), "BUSINESS", Number(rows[0].session_version)) } });
   } catch (error) {
     next(error);
   }
@@ -2486,7 +2532,7 @@ app.post("/riders/auth/login", async (req, res, next) => {
               rp.user_id,
               u.name,
               u.phone,
-              u.password_hash,
+              u.session_version, u.password_hash,
               u.status AS user_status,
               rp.vehicle_type,
               rp.license_number,
@@ -2512,7 +2558,7 @@ app.post("/riders/auth/login", async (req, res, next) => {
       return;
     }
 
-    res.json({ rider: { ...mapRiderProfile(rows[0]), token: signAccountToken(String(rows[0].id), "RIDER") } });
+    res.json({ rider: { ...mapRiderProfile(rows[0]), token: signAccountToken(String(rows[0].id), "RIDER", Number(rows[0].session_version)) } });
   } catch (error) {
     next(error);
   }
